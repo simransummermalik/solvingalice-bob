@@ -985,3 +985,438 @@ for _, row in large_readout.iterrows():
 worst_resonant = matched_validation.loc["resonant", "wrong codeword"] + matched_validation.loc["resonant", "leakage"]
 print(f"even charging all residual leakage as a wrong bit, resonant error bound = {worst_resonant:.6g}")
 print(f"constant-drive wrong-codeword population for comparison = {matched_validation.loc['constant', 'wrong codeword']:.6g}")
+
+# %% [markdown]
+# 2.4 extension — choose the ending, then calculate the pulse
+#
+# the question here is narrower than 'undo a measurement': can a drive leave a
+# useful emitted signal while bringing the *motion* back near its starting point?
+# this cannot recover coherence that the measured bit information has destroyed.
+# reset-shaped measurement pulses already exist in other architectures, e.g.
+# [jerger et al.](https://arxiv.org/abs/2406.04891). the test here is their usefulness
+# for this nonlinear dissipative cat, not a claim that pulse cleanup is new.
+#
+# put y = im(a - alpha), x = re(b), and omega = 2 g2 alpha near the positive well.
+# to first order, y' = -ka y/2 - omega x - u and x' = omega y - kb x/2.
+# near the other well the same drive gives the same y and opposite x. therefore
+# one open-loop pulse can satisfy the endpoint conditions for either stored bit.
+# the tiny loss-induced shift of the real well is omitted in this design model;
+# it is present in the full quantum simulation used to judge the result.
+#
+# expand u in smooth functions sin²(pi t/d) cos(m pi t/d). integrate each one's
+# response, then find combinations with x(d)=y(d)=0 using a matrix nullspace.
+# within that space maximize emitted signal energy per drive energy using a
+# generalized eigenvalue problem. the robust version also cancels the first
+# derivative of the endpoint with respect to the exchange frequency.
+# this is a linear design hypothesis, not a proof of quantum recovery.
+
+# %%
+from scipy.integrate import solve_ivp  # only the inexpensive two-variable design model
+
+design_duration = 1.5  # all candidates still get the same 3 microseconds total
+design_modes = 15  # a fixed smooth basis, not hundreds of freely fitted samples
+design_peak_limit = 0.5 * g2  # same amplitude limit as the earlier experiment
+extension_target = 0.79  # chosen before testing new pulses; not high-fidelity readout
+extension_criteria = {"information relative": 0.01, "wrong relative": 0.01,
+                      "wrong absolute": 2e-6, "negative eigenvalue": 1e-7,
+                      "assignment absolute": 0.03}  # keep these unchanged if a test fails
+
+
+def linear_pulse_response(duration, frequency_factor=1.0):
+    grid = np.linspace(0, duration, 1501)  # resolves the fastest basis function
+    harmonics = np.arange(design_modes)  # the zero-frequency member is included
+    def basis(t):
+        return np.sin(np.pi*t/duration)**2 * np.cos(harmonics*np.pi*t/duration)
+    frequency = 2*g2*alpha*frequency_factor
+    matrix = np.array([[-ka/2, -frequency], [frequency, -kb/2]])
+    def rhs(t, state):
+        motion = state.reshape(2, design_modes)
+        forcing = np.stack([-basis(t), np.zeros(design_modes)])
+        return (matrix @ motion + forcing).ravel()
+    solution = solve_ivp(rhs, (0, duration), np.zeros(2*design_modes), t_eval=grid,
+                         rtol=2e-10, atol=2e-12)  # design accuracy, separate from the quantum solver
+    assert solution.success
+    response = solution.y.reshape(2, design_modes, -1).transpose(2, 0, 1)
+    basis_values = np.array([basis(t) for t in grid])
+    return grid, basis_values, response
+
+
+def calculate_closed_pulse(robust=False):
+    grid, basis_values, response = linear_pulse_response(design_duration)
+    endpoint = response[-1]  # maps coefficients to the two residual quadratures
+    constraints = endpoint
+    if robust:
+        _, _, lower = linear_pulse_response(design_duration, 0.99)
+        _, _, upper = linear_pulse_response(design_duration, 1.01)
+        derivative = (upper[-1] - lower[-1]) / 0.02
+        constraints = np.vstack([endpoint, derivative])  # first-order robustness, not a guarantee over a large interval
+    null = la.null_space(constraints)  # every vector in this subspace closes the linear trajectory
+    signal_gram = 4*kb*np.trapezoid(response[:, 1, :, None]*response[:, 1, None, :], grid, axis=0)
+    energy_gram = np.trapezoid(basis_values[:, :, None]*basis_values[:, None, :], grid, axis=0)
+    values, vectors = la.eigh(null.T @ signal_gram @ null, null.T @ energy_gram @ null)
+    coefficients = null @ vectors[:, -1]  # greatest information proxy per integrated drive energy
+    fine_grid = np.linspace(0, design_duration, 30001)
+    fine_basis = np.sin(np.pi*fine_grid[:, None]/design_duration)**2 * np.cos(np.arange(design_modes)*np.pi*fine_grid[:, None]/design_duration)
+    coefficients /= 1.0001*np.max(abs(fine_basis @ coefficients))  # a small safety margin below the amplitude cap
+    return {"kind": "closed robust" if robust else "closed nominal", "duration": design_duration,
+            "coefficients": coefficients.tolist(), "peak": float(design_peak_limit)}
+
+
+def extension_waveform(spec):
+    duration, peak = spec["duration"], spec["peak"]
+    kind = spec["kind"]
+    coefficients = jnp.asarray(spec.get("coefficients", [0.0]))
+    def envelope(t):
+        if kind.startswith("closed"):
+            value = jnp.sin(jnp.pi*t/duration)**2 * jnp.sum(coefficients*jnp.cos(jnp.arange(len(coefficients))*jnp.pi*t/duration))
+        elif kind == "resonant":
+            value = jnp.sin(jnp.pi*t/duration)**2 * jnp.cos(2*g2*alpha*t)
+        elif kind == "flat":
+            edge = 0.02  # finite 20 ns ramps; an ideal step would have infinite bandwidth
+            value = jnp.sin(jnp.pi/2*jnp.minimum(jnp.minimum(t, duration-t)/edge, 1.0))**2
+        else:
+            value = 0.0*t  # idle reference
+        return jnp.where((t >= 0) & (t < duration), peak*value, 0.0)
+    return envelope
+
+
+closed_specs = [calculate_closed_pulse(False), calculate_closed_pulse(True)]
+linear_rows = []
+for spec in closed_specs:
+    for factor in [0.95, 1.0, 1.05]:
+        grid, basis_values, response = linear_pulse_response(spec["duration"], factor)
+        coefficients = spec["peak"]*np.asarray(spec["coefficients"])
+        endpoint = response[-1] @ coefficients
+        linear_rows.append({"pulse": spec["kind"], "exchange factor": factor,
+                            "residual motion squared": float(endpoint @ endpoint)})
+table(pd.DataFrame(linear_rows), "closed_linear_endpoints")
+assert max(row["residual motion squared"] for row in linear_rows if row["exchange factor"] == 1.0) < 1e-16
+print("fixed acceptance criteria:", extension_criteria)
+
+# %% [markdown]
+# now let the full quantum model disagree with the design, if it needs to.
+# the training cutoff is (24,6); the larger cutoffs below are held-out tests.
+# a fixed target information of 0.79 corresponds to roughly 19% assignment error
+# in the earlier ideal gaussian estimate. this is a modest-information benchmark,
+# not a demonstrated high-fidelity measurement. a candidate unable to reach the
+# target under the amplitude cap is marked infeasible, not quietly given more power.
+# the flat-drive baseline is tuned over three durations, with finite edge ramps.
+
+# %%
+def extension_run(spec, na=24, nb=6, tolerance=2e-12, coupling_factor=1.0, corrected=False, sign=1):
+    h, jumps, ops, a, b = two_mode(na, nb, coupling=g2*coupling_factor)
+    if corrected:
+        exchange, _ = sine_exchange(na, nb, calibrate=True)
+        h = exchange - g2*alpha**2*(b+b.dag())  # same calibrated circuit correction as above
+    times = np.linspace(0, 3, 601)  # saved grid; adaptive integration uses much smaller internal steps
+    initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))
+    base_path = run_key(h, jumps, initial, times, ops, 100*tolerance, tolerance)
+    digest = hashlib.sha256((base_path.stem + json.dumps(spec, sort_keys=True) + "closed-pulse-v1").encode()).hexdigest()
+    path = base_path.with_name(digest + ".npz")  # include the entire pulse and the actual model in the cache key
+    if path.exists():
+        with np.load(path, allow_pickle=False) as saved:
+            run = {name: saved[name] for name in ["t", "e", "rho"]}
+            run["final"] = dq.asqarray(saved["final"], dims=(na, nb))
+    else:
+        edges = sorted(set([0.02, spec["duration"]-0.02, spec["duration"]]))
+        driven = h + dq.modulated(extension_waveform(spec), a+a.dag(), discontinuity_ts=edges)
+        run = evolve(driven, jumps, initial, times, ops, (na, nb), rtol=100*tolerance, atol=tolerance)
+        save_run(path, run)
+    even = np.asarray(dq.to_numpy(cat_ket(na, alpha, 1))).ravel()
+    odd = np.asarray(dq.to_numpy(cat_ket(na, alpha, -1))).ravel()
+    wrong = (even-sign*odd)/np.sqrt(2)
+    wrong_t = np.einsum("i,tij,j->t", wrong.conj(), run["rho"], wrong).real
+    in_code = sum(np.einsum("i,tij,j->t", cat.conj(), run["rho"], cat).real for cat in [even, odd])
+    run.update({"wrong": float(wrong_t[-1]), "leakage": float(1-in_code[-1]),
+                "wrong trace": wrong_t, "leakage trace": 1-in_code,
+                "information": float(4*kb*np.trapezoid(run["e"][3].real**2, times)),
+                "spec": dict(spec), "checks": checks(run)})
+    return run
+
+
+def match_extension(spec, target=extension_target, na=24, nb=6):
+    trial = dict(spec, peak=float(design_peak_limit))
+    run = extension_run(trial, na, nb)
+    if run["information"] < target*(1-extension_criteria["information relative"]):
+        return run, False  # do not violate the hardware limit to force a favorable comparison
+    for _ in range(4):
+        trial["peak"] *= float(np.sqrt(target/run["information"]))
+        if trial["peak"] > design_peak_limit:
+            return run, False
+        run = extension_run(trial, na, nb)
+        if abs(run["information"]/target-1) < 0.002:
+            return run, True
+    return run, abs(run["information"]/target-1) < extension_criteria["information relative"]
+
+
+training_specs = [{"kind": "flat", "duration": duration, "peak": float(design_peak_limit)} for duration in [0.75, 1.5, 2.25]]
+training_specs += [{"kind": "resonant", "duration": 1.5, "peak": float(design_peak_limit)}, *closed_specs]
+training_runs, training_rows = {}, []
+for spec in training_specs:
+    label = f"{spec['kind']} {spec['duration']:g} us"
+    run, feasible = match_extension(spec)
+    training_runs[label] = run
+    training_rows.append({"pulse": label, "feasible": feasible, "information": run["information"],
+                          "peak/g2": run["spec"]["peak"]/g2, "wrong": run["wrong"], "leakage": run["leakage"],
+                          "wrong + leakage": run["wrong"]+run["leakage"]})
+    print(label, training_rows[-1], flush=True)
+training_table = pd.DataFrame(training_rows)
+table(training_table, "closed_training")
+
+# %% [markdown]
+# the selection rule counts leakage as failure, rather than hiding it behind a
+# small wrong-codeword population. the new pulse must beat the existing resonant
+# waveform too, not just the flat drive. a small difference may be unresolved.
+# readiness is a separate metric: after the drive ends, has the information
+# reached 99% of the target and does leakage stay below a declared threshold?
+# i show three thresholds (1e-3, 1e-4, 1e-5), because there is no universal hardware
+# definition of 'ready'. this is an unconditional-state diagnostic, not a bound
+# on every individual measurement trajectory.
+
+# %%
+feasible_training = training_table[training_table["feasible"]].copy()
+flat_label = feasible_training[feasible_training["pulse"].str.startswith("flat")].sort_values("wrong + leakage").iloc[0]["pulse"]
+closed_label = feasible_training[feasible_training["pulse"].str.startswith("closed")].sort_values("wrong + leakage").iloc[0]["pulse"]
+selected_specs = {"flat": training_runs[flat_label]["spec"],
+                  "resonant": training_runs["resonant 1.5 us"]["spec"],
+                  "closed": training_runs[closed_label]["spec"]}  # freeze before looking at larger cutoffs
+print("selected on the training cutoff:", flat_label, "and", closed_label)
+
+
+def ready_time(run, leakage_limit):
+    information_t = 4*kb*cumulative_trapezoid(run["e"][3].real**2, run["t"], initial=0)
+    good = (run["leakage trace"] <= leakage_limit) & (information_t >= 0.99*extension_target)
+    stays_good = np.logical_and.accumulate(good[::-1])[::-1]  # do not count a brief crossing during ringing
+    indices = np.flatnonzero(stays_good & (run["t"] >= run["spec"]["duration"]))
+    return float(run["t"][indices[0]]) if len(indices) else np.nan
+
+
+validation_runs, validation_rows, readiness_rows = {}, [], []
+for label, spec in selected_specs.items():
+    for na, nb in [(24, 6), (32, 8), (36, 10)]:
+        run = extension_run(spec, na, nb)
+        validation_runs[(label, na, nb)] = run
+        validation_rows.append({"pulse": label, "na": na, "nb": nb, "information": run["information"],
+                                "wrong": run["wrong"], "leakage": run["leakage"],
+                                "wrong + leakage": run["wrong"]+run["leakage"],
+                                "max memory tail": float(run["e"][5].real.max()),
+                                "max buffer tail": float(run["e"][6].real.max()), **run["checks"]})
+        print("held-out check", label, na, nb, validation_rows[-1], flush=True)
+    reference, previous = validation_runs[(label, 36, 10)], validation_runs[(label, 32, 8)]
+    wrong_change = abs(reference["wrong"]-previous["wrong"])
+    passed = (wrong_change < max(extension_criteria["wrong absolute"], extension_criteria["wrong relative"]*abs(reference["wrong"]))
+              and abs(reference["information"]/previous["information"]-1) < extension_criteria["information relative"]
+              and reference["checks"]["min eigenvalue"] > -extension_criteria["negative eigenvalue"])
+    print(f"{label}: held-out numerical criterion passed = {passed}; wrong absolute change = {wrong_change:.3e}", flush=True)
+    for threshold in [1e-3, 1e-4, 1e-5]:
+        readiness_rows.append({"pulse": label, "leakage threshold": threshold,
+                               "ready time us": ready_time(reference, threshold)})
+table(pd.DataFrame(validation_rows), "closed_validation")
+table(pd.DataFrame(readiness_rows), "closed_readiness")
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.4))
+for label, spec in selected_specs.items():
+    run = validation_runs[(label, 36, 10)]
+    axes[0].plot(run["t"], jax.vmap(extension_waveform(spec))(jnp.asarray(run["t"]))/g2, label=label)
+    axes[1].plot(run["t"], 4*kb*cumulative_trapezoid(run["e"][3].real**2, run["t"], initial=0), label=label)
+    axes[2].plot(run["t"], run["wrong trace"]+run["leakage trace"], label=label)
+axes[0].set(ylabel="memory drive / g2", xlabel="time (μs)")
+axes[1].set(ylabel="information proxy", xlabel="time (μs)")
+axes[2].set(ylabel="wrong codeword + leakage", xlabel="time (μs)", yscale="log")
+axes[0].legend()
+finish_figure(fig, "16_closed_pulse_recovery")
+
+# %% [markdown]
+# these are stress tests of the frozen pulse, without reoptimizing its shape.
+# a coupling change also changes the stabilizing pump consistently to keep alpha
+# fixed. this is a calibrated-g uncertainty test, not a claim to cover every
+# possible independent pump error. the circuit test retains the resonant sine
+# corrections derived above; it still omits counter-rotating and transformed-bath
+# effects. information can change in a stress test, so it is printed alongside
+# damage rather than silently calling the comparison equal-information.
+
+# %%
+stress_rows = []
+for label in ["flat", "closed"]:
+    for factor, corrected, condition in [(0.95, False, "coupling -5%"), (1.05, False, "coupling +5%"),
+                                          (1.0, True, "calibrated resonant sine")]:
+        run = extension_run(selected_specs[label], 32, 8, coupling_factor=factor, corrected=corrected)
+        stress_rows.append({"pulse": label, "condition": condition, "information": run["information"],
+                            "wrong": run["wrong"], "leakage": run["leakage"],
+                            "ready time at 1e-4 us": ready_time(run, 1e-4)})
+        print("stress test", stress_rows[-1], flush=True)
+table(pd.DataFrame(stress_rows), "closed_stress_tests")
+
+# %% [markdown]
+# noisy readout, including quantum backaction
+#
+# rather than adding noise to the mean curve, simulate homodyne quantum
+# trajectories with [dynamiqs' diffusive solver](https://www.dynamiqs.org/stable/python_api/integrators/dssesolve.html).
+# both loss channels are unraveled to keep the state a small vector. only the
+# buffer record is given to the classifier; discarding the memory-channel record
+# gives the correct buffer-record marginal for an unobserved memory bath.
+# [the solver documentation](https://www.dynamiqs.org/stable/python_api/integrators/dsmesolve.html)
+# explicitly supports this record-only construction. no feedback uses the hidden
+# channel. the trajectories are not conditional memory states for a buffer-only
+# observer; interpreting them that way would be incorrect.
+#
+# the receiver uses a fixed matched filter from the deterministic simulation,
+# with a zero threshold fixed by branch symmetry, not fitted to the test records.
+# this is a specified practical classifier, not necessarily the optimal receiver.
+# time-averaged currents must be multiplied by their bin widths when integrating.
+# efficiency is one here; detector loss, bandwidth and amplifier noise are not
+# magically included. the ideal-output gaussian prediction is only a comparison.
+
+# %%
+def trajectory_batch(spec, sign, seed, count=128, dt=0.0001, na=24, nb=6, map_normalization=False):
+    h, jumps, ops, a, b = two_mode(na, nb)
+    initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))
+    times = np.linspace(0, 3, 601)  # 5 ns record bins; dt is the finer stochastic integration step
+    base_path = run_key(h, jumps, initial, times, [ops[0]], dt, dt)
+    settings = {"pulse": spec, "seed": seed, "count": count, "dt": dt,
+                "method": "Rouchon1-normalized-v1" if map_normalization else "Rouchon1-ket-normalized-v1"}
+    digest = hashlib.sha256((base_path.stem+json.dumps(settings, sort_keys=True)).encode()).hexdigest()
+    path = base_path.with_name("records-"+digest+".npz")
+    if path.exists():
+        with np.load(path, allow_pickle=False) as saved:
+            return {key: saved[key] for key in saved.files}
+    driven = h+dq.modulated(extension_waveform(spec), a+a.dag())  # smooth edges are resolved by the fixed step
+    keys = jax.random.split(jax.random.key(seed), count)  # independent seeds are recorded for reproducibility
+    started = time.monotonic()
+    result = dq.dssesolve(driven, jumps, initial, times, keys, exp_ops=[ops[0]],
+                         method=dq.method.Rouchon1(dt=dt, normalize=map_normalization), save_states=False)
+    # both variants normalize each ket; the expensive option also corrects the discrete Kraus map
+    records = np.asarray(result.measurements)[:, 0, :]  # buffer channel only; do not leak the memory record
+    final_n = np.asarray(result.expects)[:, 0, -1].real
+    assert np.isfinite(records).all() and np.isfinite(final_n).all()
+    output = {"t": times, "records": records, "final_n": final_n}
+    np.savez_compressed(path, **output)
+    print(f"{spec['kind']} sign {sign:+d}: {count} trajectories, dt={dt:g}, ({na},{nb}), {time.monotonic()-started:.1f}s", flush=True)
+    return output
+
+
+def wilson_interval(errors, count):
+    z = 1.959963984540054  # two-sided 95% binomial score interval, not sqrt(p) error bars
+    p = errors/count
+    center = (p+z*z/(2*count))/(1+z*z/count)
+    half = z*np.sqrt(p*(1-p)/count+z*z/(4*count*count))/(1+z*z/count)
+    return float(center-half), float(center+half)
+
+
+def score_records(batch, template):
+    times = batch["t"]
+    weight = 2*np.sqrt(kb)*np.interp(times, template["t"], template["e"][3].real)
+    weight = (weight[:-1]+weight[1:])/2  # bin-average approximation; bins are short compared with ringing
+    widths = np.diff(times)
+    normalization = np.sqrt(np.sum(weight*weight*widths))
+    return batch["records"] @ (weight*widths) / normalization
+
+# %%
+record_rows, record_samples = [], {}
+for label, spec in selected_specs.items():
+    template = validation_runs[(label, 24, 6)]  # deterministic filter; none of the test records trains it
+    for sign in [1, -1]:
+        scores, final_numbers = [], []
+        for repeat in range(2):
+            seed = 20261024 + 1000*(sign < 0) + repeat  # common random numbers across pulses, independent between bits/batches
+            batch = trajectory_batch(spec, sign, seed, count=512)
+            scores.extend(score_records(batch, template))
+            final_numbers.extend(batch["final_n"])
+        scores, final_numbers = np.asarray(scores), np.asarray(final_numbers)
+        errors = sign*scores <= 0
+        low, high = wilson_interval(int(errors.sum()), len(errors))
+        record_samples[(label, sign)] = {"scores": scores, "errors": errors, "final n": final_numbers}
+        record_rows.append({"pulse": label, "initial bit sign": sign, "shots": len(errors),
+                            "errors": int(errors.sum()), "assignment error": float(errors.mean()),
+                            "95% low": low, "95% high": high, "score mean": float(scores.mean()),
+                            "score standard deviation": float(scores.std(ddof=1)),
+                            "final n mean": float(final_numbers.mean()),
+                            "final n standard error": float(final_numbers.std(ddof=1)/np.sqrt(len(final_numbers)))})
+        print("noisy readout", record_rows[-1], flush=True)
+record_table = pd.DataFrame(record_rows)
+table(record_table, "closed_noisy_readout")
+
+assignment_rows = []
+for label in selected_specs:
+    errors = np.concatenate([record_samples[(label, sign)]["errors"] for sign in [1, -1]])
+    low, high = wilson_interval(int(errors.sum()), len(errors))
+    run = validation_runs[(label, 36, 10)]
+    assignment_rows.append({"pulse": label, "shots": len(errors), "assignment error": float(errors.mean()),
+                            "95% low": low, "95% high": high,
+                            "gaussian mean-signal prediction": float(0.5*erfc(np.sqrt(run["information"]/2))),
+                            "wrong": run["wrong"], "leakage": run["leakage"],
+                            "wrong + leakage": run["wrong"]+run["leakage"]})
+assignment_table = pd.DataFrame(assignment_rows)
+table(assignment_table, "closed_assignment_summary")
+
+comparison_rows = []
+for baseline in ["flat", "resonant"]:
+    differences = np.concatenate([record_samples[("closed", sign)]["errors"].astype(float)
+                                  - record_samples[(baseline, sign)]["errors"].astype(float) for sign in [1, -1]])
+    half = 1.96*differences.std(ddof=1)/np.sqrt(len(differences))  # paired interval, since the pulses share random seeds
+    low, high = differences.mean()-half, differences.mean()+half
+    comparison_rows.append({"comparison": "closed minus "+baseline, "assignment difference": differences.mean(),
+                            "95% low": low, "95% high": high,
+                            "within +/-3 percentage points": bool(low > -0.03 and high < 0.03)})
+table(pd.DataFrame(comparison_rows), "closed_assignment_equivalence")
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.7))
+for _, row in assignment_table.iterrows():
+    label = row["pulse"]
+    numerical_change = abs(row["wrong + leakage"] - sum(validation_runs[(label, 32, 8)][key] for key in ["wrong", "leakage"]))
+    axes[0].errorbar(row["assignment error"], row["wrong + leakage"],
+                    xerr=[[row["assignment error"]-row["95% low"]], [row["95% high"]-row["assignment error"]]],
+                    yerr=numerical_change, fmt="o", capsize=3, label=label)
+    for sign, style in [(1, "-"), (-1, "--")]:
+        axes[1].hist(record_samples[(label, sign)]["scores"], bins=np.linspace(-4, 4, 41),
+                     density=True, histtype="step", linestyle=style, label=f"{label}, {sign:+d}")
+axes[0].set(xlabel="measured assignment error (95% interval)", ylabel="wrong codeword + leakage")
+axes[0].legend()
+axes[1].axvline(0, color="black", linewidth=0.8)
+axes[1].set(xlabel="fixed matched-filter score", ylabel="record density")
+axes[1].legend(fontsize=7, ncol=2)
+finish_figure(fig, "17_noisy_readout_tradeoff")
+
+# %% [markdown]
+# the stochastic integrator is first order. normalized kets keep trajectories
+# well behaved, but that is not evidence of time-step convergence. the checks
+# below halve the integration step and increase the fock cutoffs independently.
+# they use new records, never the records used to choose the pulse. the smaller
+# validation samples have wider confidence intervals: 'inconclusive' is a valid
+# outcome, not a reason to loosen the declared three-percentage-point criterion.
+# rare bit-flip probabilities are taken from the deterministic density matrix,
+# not estimated by counting a handful of flips in this limited trajectory sample.
+
+# %%
+record_check_rows = []
+for label in ["flat", "closed"]:
+    spec = selected_specs[label]
+    for condition, dt, na, nb, normalized in [("half timestep", 0.00005, 24, 6, False),
+                                               ("larger cutoffs", 0.0001, 32, 8, False),
+                                               ("normalized discrete map", 0.0002, 24, 6, True)]:
+        errors, aligned_scores, final_numbers = [], [], []
+        template = validation_runs[(label, na, nb)]
+        for sign in [1, -1]:
+            seed = 30261024+1000*(sign < 0)+["half timestep", "larger cutoffs", "normalized discrete map"].index(condition)
+            batch = trajectory_batch(spec, sign, seed, count=256, dt=dt, na=na, nb=nb, map_normalization=normalized)
+            scores = score_records(batch, template)
+            errors.extend(sign*scores <= 0)
+            aligned_scores.extend(sign*scores)
+            final_numbers.extend(batch["final_n"])
+        errors, aligned_scores, final_numbers = np.asarray(errors), np.asarray(aligned_scores), np.asarray(final_numbers)
+        low, high = wilson_interval(int(errors.sum()), len(errors))
+        reference = assignment_table.set_index("pulse").loc[label]
+        difference = errors.mean()-reference["assignment error"]
+        half = 1.96*np.sqrt(errors.mean()*(1-errors.mean())/len(errors)
+                            + reference["assignment error"]*(1-reference["assignment error"])/reference["shots"])
+        record_check_rows.append({"pulse": label, "check": condition, "shots": len(errors),
+                                  "assignment error": errors.mean(), "95% low": low, "95% high": high,
+                                  "difference from main": difference, "difference 95% halfwidth": half,
+                                  "within +/-3 percentage points": bool(abs(difference)+half < 0.03),
+                                  "aligned score mean": aligned_scores.mean(),
+                                  "score mean standard error": aligned_scores.std(ddof=1)/np.sqrt(len(errors)),
+                                  "deterministic predicted score": np.sqrt(template["information"]),
+                                  "final n mean": final_numbers.mean(),
+                                  "deterministic final n": template["e"][0, -1].real})
+        print("record validation", record_check_rows[-1], flush=True)
+table(pd.DataFrame(record_check_rows), "closed_record_validation")

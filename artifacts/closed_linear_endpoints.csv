@@ -1,0 +1,7 @@
+pulse,exchange factor,residual motion squared
+closed nominal,0.95,0.0005313002673482211
+closed nominal,1.0,4.8536243920297194e-32
+closed nominal,1.05,0.0005533903752312504
+closed robust,0.95,9.809672421431424e-06
+closed robust,1.0,9.641390864757697e-33
+closed robust,1.05,6.082798074169928e-06

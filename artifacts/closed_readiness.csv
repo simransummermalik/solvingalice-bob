@@ -1,0 +1,10 @@
+pulse,leakage threshold,ready time us
+flat,0.001,1.8
+flat,0.0001,2.1550000000000002
+flat,1e-05,2.735
+resonant,0.001,1.62
+resonant,0.0001,1.975
+resonant,1e-05,2.56
+closed,0.001,1.5
+closed,0.0001,1.7750000000000001
+closed,1e-05,2.35
