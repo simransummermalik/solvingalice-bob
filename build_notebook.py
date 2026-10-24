@@ -55,9 +55,13 @@ if args.execute:
     try:
         if args.resume_after:
             with client.setup_kernel():
-                for index in [1, 3]:  # re-create imports and helpers; don't claim to restore hidden kernel state
+                for index in range(1, args.resume_after):  # rebuild visible state; outputs alone cannot restore variables
+                    if notebook.cells[index].cell_type != "code":
+                        continue
                     client.execute_cell(notebook.cells[index], index)
                 for index in range(args.resume_after, len(cells)):
+                    if notebook.cells[index].cell_type != "code":
+                        continue
                     client.execute_cell(notebook.cells[index], index)
         else:
             client.execute()  # raises on the first failing cell; no hidden ignored errors

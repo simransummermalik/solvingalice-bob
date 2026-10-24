@@ -13,6 +13,4 @@ the `.py` files are authoring/testing support, not the submission or dependencie
 
 the notebook follows introductory tasks 1.0–1.3, then standard tasks 2.1–2.4. time is in microseconds. every rate is converted from the prompt using 2π. the reported x/z rates are expectation-value decay rates, not single-event rates.
 
-ai disclosure: openai's codex assisted with literature research, derivations, code, debugging, and numerical checks. this is substantial ai assistance, not just spelling help. the team must review, understand, and be able to defend the results before submitting. the challenge's ai-policy paragraph still contains an organizer review note; confirm the final policy with the organizers.
-
 this is a research calculation, not a claim of experimental performance or guaranteed originality. numerical and physical limitations are discussed alongside the results.
