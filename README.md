@@ -13,7 +13,7 @@ tests whether protection survives measurement.
 The result is a tested control proposal, an executed [Jupyter notebook](cat_qubits.ipynb),
 and a numerical record of what worked, what failed, and why.
 
-## The Creative Step: Let the Cat Breathe, Then Follow Its Frequency
+## The Creative Step: Let the Cat Qubit have some Room, Then Follow Its Frequency
 
 Our memory oscillator stores the logical states near opposite coherent states.
 A lossy buffer both stabilizes the memory and carries the readout signal.
