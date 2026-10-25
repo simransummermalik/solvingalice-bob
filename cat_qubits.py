@@ -1433,51 +1433,351 @@ table(pd.DataFrame(record_check_rows), "closed_record_validation")
 # equal information still means equal *mean-signal information*, not a guaranteed
 # equal assignment error. both quantities are reported separately. the physical
 # target is the one in the prompt, alpha=2.1, with the same drive-amplitude cap.
+#
+# after a kernel restart, start with the next cell and leave audit_load_saved true.
+# it opens the completed tables and plots immediately, without running any model.
+# false restores the model definitions and frozen controls before recomputing only
+# this addendum; compatible numerical caches are reused where available.
 
 # %%
-from scipy.stats import norm  # converts a desired gaussian assignment error to an information budget
+audit_load_saved = True  # leave true after a restart; false runs the numerical addendum and reuses compatible caches
 
-audit_criteria = {"information relative": 0.005, "assignment difference": 0.03,
-                  "rate absolute floor": 1e-8, "leakage threshold": 1e-4}
-audit_period = 3.0  # drive, listen and recover; do not reset the buffer between cycles
-audit_cycles = 9  # fixed before inspecting the repeated-cycle rates
+import json  # read the recorded results without rerunning the model
+from pathlib import Path  # saved data live beside the notebook
+import pandas as pd  # reopen the result tables
+from IPython.display import Image, Markdown, display  # show the saved figures and interpretation
 
-
-def audit_ready(run, target=extension_target, leakage_limit=1e-4):
-    information = 4*kb*cumulative_trapezoid(run["e"][3].real**2, run["t"], initial=0)
-    good = (information >= 0.99*target) & (run["leakage trace"] <= leakage_limit)
-    stable = np.logical_and.accumulate(good[::-1])[::-1]
-    indices = np.flatnonzero(stable & (run["t"] >= run["spec"]["duration"]))
-    return float(run["t"][indices[0]]) if len(indices) else np.nan
+artifacts = Path(globals().get("artifacts", "artifacts"))  # use the same project results folder
 
 
-def audit_match(spec, coupling_factor=1.0, corrected=False, na=32, nb=8):
-    trial = dict(spec)  # calibrate amplitude, keep the pulse shape and its duration frozen
-    run = extension_run(trial, na, nb, coupling_factor=coupling_factor, corrected=corrected)
-    for _ in range(5):
-        if abs(run["information"]/extension_target-1) <= audit_criteria["information relative"]:
-            return run, True
-        trial = dict(trial, peak=float(trial["peak"]*np.sqrt(extension_target/run["information"])))
-        if trial["peak"] > design_peak_limit:
-            return run, False  # infeasible under the original hardware cap
+def audit_saved_table(name):
+    path = artifacts / (name + ".csv")
+    if not path.is_file():
+        raise FileNotFoundError(f"missing {path}; open the notebook from the project folder containing artifacts")
+    frame = pd.read_csv(path)  # loading a table does not run any simulation
+    display(frame)
+    return frame
+
+
+def audit_saved_figure(name):
+    path = artifacts / (name + ".png")
+    if not path.is_file():
+        raise FileNotFoundError(f"missing saved figure {path}")
+    display(Image(filename=str(path)))  # display the actual previously computed plot
+
+if audit_load_saved:
+    recorded_summary = json.loads((artifacts / "audit_summary.json").read_text())
+    print("using saved results; no simulations are running.")
+    print("recorded software versions:", recorded_summary["software_versions"])  # keep their original provenance
+    calibrated_rows = audit_saved_table("audit_equal_information_circuit").to_dict("records")
+else:
+    # a fresh kernel needs definitions, not the earlier sweeps or pulse search
+    if any(name not in globals() for name in ["cat_ket","two_mode","evolve","run_key","save_run","checks","table","finish_figure","sine_exchange","extension_waveform","extension_run","trajectory_batch","wilson_interval","score_records","g2","kb","ka","alpha","versions","wa","wb","ej","phia","phib","eps_p","selected_specs","extension_target","design_peak_limit"]):
+        import os  # keep caches local when this runs on another computer
+        from pathlib import Path  # portable paths for the saved tables and figures
+        os.environ.setdefault("MPLCONFIGDIR", str(Path.cwd() / ".cache" / "matplotlib"))
+
+        import time  # records the cost of the numerical checks
+        import json  # saves a small machine-readable summary at the end
+        import hashlib  # ties cached full-model runs to the actual matrices and solver settings
+        import importlib.metadata as metadata  # records exactly which package versions ran
+        import numpy as np  # ordinary arrays for analysis and plotting
+        import pandas as pd  # puts the convergence results in readable tables
+        import matplotlib.pyplot as plt  # makes the figures
+        import scipy.linalg as la  # dense linear algebra for small verification problems
+        from scipy.optimize import curve_fit  # fits decay rates rather than eyeballing them
+        from scipy.sparse.linalg import eigs  # finds slow modes without evolving for seconds
+        from scipy.integrate import cumulative_trapezoid  # accumulates readout information
+        from scipy.special import erfc  # gaussian discrimination error, with caveats below
+        import qutip as qt  # independent sparse solver and wigner-function calculation
+        import dynamiqs as dq  # the master-equation solver requested in the challenge
+        import jax  # dynamiqs uses jax underneath
+        import jax.numpy as jnp  # arrays which the compiled solver understands
+        from IPython.display import display  # keeps tables readable inside the notebook
+
+        dq.set_precision("double")  # tiny decay rates need 64-bit, not the tutorial's 32-bit
+        dq.set_progress_meter(False)  # a separate progress bar for every solve gets noisy
+        plt.rcParams.update({"figure.dpi": 115, "axes.spines.top": False, "axes.spines.right": False})
+        artifacts = Path("artifacts")  # these are generated results, not input data
+        artifacts.mkdir(exist_ok=True)
+        g2 = 2 * np.pi * 0.763  # mhz -> angular frequency per microsecond
+        kb = 2 * np.pi * 2.6  # intentionally leaky buffer
+        ka = 2 * np.pi * 0.0093  # unwanted single-photon memory loss
+        alpha = 2.1  # target separation in coherent-state amplitude
+        k2 = 4 * g2**2 / kb  # eliminated-buffer prediction, not automatically valid
+        eps_d = g2 * alpha**2  # buffer drive with the sign convention of this prompt
+        versions = {name: metadata.version(name) for name in ["dynamiqs", "jax", "qutip", "numpy", "scipy", "matplotlib", "pandas"]}
+        print(versions)
+        print(f"jax double precision: {jax.config.x64_enabled}; devices: {jax.devices()}")
+        display(pd.Series({"g2": g2, "kb": kb, "ka": ka, "k2": k2, "eps_d": eps_d}, name="per microsecond"))
+
+        wa, wb, ej = 2*np.pi*np.array([4000.0, 4800.0, 40000.0])  # same circuit parameters as above
+        phia, phib = 0.06, 0.3  # zero-point phase fluctuations
+        eps_p = 2*g2/(ej*phia**2*phib)  # calibrated pump amplitude
+        extension_target = 0.79  # the original information budget
+        design_peak_limit = 0.5*g2  # keep the original hardware limit
+
+        def cat_ket(n, amplitude, sign=1):
+            plus = dq.coherent(n, amplitude)  # one well
+            minus = dq.coherent(n, -amplitude)  # the other well
+            return dq.unit(plus + sign * minus)
+
+
+        def two_mode(na, nb, amplitude=alpha, loss=ka, drive=0.0, coupling=g2, buffer_loss=kb):
+            a, b = dq.destroy(na, nb)  # tensor-product operators, not two unrelated matrices
+            h = coupling * (a @ a @ b.dag() + a.dag() @ a.dag() @ b)
+            h = h - coupling * amplitude**2 * (b + b.dag())  # same target wells at every cutoff
+            h = h + drive * (a + a.dag())  # optional real resonant memory drive
+            jumps = [np.sqrt(buffer_loss) * b, np.sqrt(loss) * a]  # rates belong inside square roots
+            tail_a = dq.tensor(dq.fock_dm(na, na - 2) + dq.fock_dm(na, na - 1), dq.eye(nb))
+            tail_b = dq.tensor(dq.eye(na), dq.fock_dm(nb, nb - 1))  # include the transient, not only the end
+            parity = dq.tensor(dq.parity(na), dq.eye(nb))  # only memory parity is the cat observable
+            observables = [a.dag() @ a, b.dag() @ b, a, b, parity, tail_a, tail_b]
+            return h, jumps, observables, a, b
+
+
+        def evolve(h, jumps, initial, times, observables, dims=None, rtol=2e-8, atol=2e-10):
+            extra = None  # single-mode calculations can simply save their small matrices
+            if dims is not None:
+                extra = lambda t, rho: dq.to_jax(dq.ptrace(rho, 0))  # keep memory, discard buffer
+            result = dq.mesolve(h, jumps, initial, jnp.asarray(times), exp_ops=observables,
+                               method=dq.method.Tsit5(rtol=rtol, atol=atol, max_steps=2_000_000),
+                               save_states=dims is None, save_extra=extra)  # sparse operators accelerate the rhs
+            values = np.asarray(result.expects)  # this also waits for the actual computation to finish
+            states = np.asarray(result.extra if dims is not None else dq.to_numpy(result.states))
+            return {"t": np.asarray(times), "e": values, "rho": states, "final": result.final_state}
+
+
+        def run_key(h, jumps, initial, times, ops, rtol, atol):
+            key = hashlib.sha256(f"memory-ptrace-v1:Tsit5:{rtol}:{atol}:{versions}".encode())
+            for value in [h, *jumps, initial, *ops]:
+                array = np.asarray(dq.to_numpy(value))  # hash actual operators, not just a descriptive filename
+                key.update(str((array.shape, array.dtype)).encode())
+                key.update(array.tobytes())
+            key.update(np.asarray(times, dtype=np.float64).tobytes())
+            folder = artifacts / "checkpoints"
+            folder.mkdir(exist_ok=True)
+            return folder / f"{key.hexdigest()}.npz"
+
+
+        def save_run(path, run):
+            np.savez_compressed(path, t=run["t"], e=run["e"], rho=run["rho"], final=dq.to_numpy(run["final"]))
+
+
+        def checks(run):
+            rho = run["rho"]  # reduced states still must be valid density matrices
+            trace_error = np.max(np.abs(np.trace(rho, axis1=-2, axis2=-1) - 1))
+            herm_error = np.max(np.abs(rho - rho.swapaxes(-1, -2).conj()))
+            minimum_eigenvalue = np.linalg.eigvalsh(rho).min()  # negative beyond solver error is a warning
+            return {"trace error": trace_error, "hermiticity error": herm_error, "min eigenvalue": minimum_eigenvalue}
+
+
+        def table(frame, name):
+            frame.to_csv(artifacts / f"{name}.csv", index=False)  # enough precision for independent replotting
+            display(frame)
+
+
+        def finish_figure(fig, name):
+            fig.tight_layout()  # don't cut off axis labels
+            fig.savefig(artifacts / f"{name}.png", bbox_inches="tight")
+            plt.show()
+
+
+        def sine_exchange(na, nb, calibrate=True, order=None):
+            aa = qt.tensor(qt.destroy(na + 8), qt.qeye(nb + 8))  # padding avoids boundary errors in the sine
+            bb = qt.tensor(qt.qeye(na + 8), qt.destroy(nb + 8))
+            phase = phia * (aa + aa.dag()) + phib * (bb + bb.dag())
+            if order is None:
+                da = qt.displace(na + 8, 1j * phia).full()[:na, :na]  # exp(i phi_a X_a)
+                db = qt.displace(nb + 8, 1j * phib).full()[:nb, :nb]
+                displacement = np.kron(da, db)  # commuting mode operators factorize exactly
+                sine = (displacement - displacement.conj().T) / (2j)
+            else:
+                series = phase - phase**3 / 6  # cubic comparison
+                if order >= 5:
+                    series = series + phase**5 / 120
+                keep = np.array([i * (nb + 8) + j for i in range(na) for j in range(nb)])
+                sine = series.full()[np.ix_(keep, keep)]  # crop only after expanding in the padded space
+            energy = np.array([wa * i + wb * j for i in range(na) for j in range(nb)])
+            resonant = np.isclose(abs(energy[:, None] - energy[None, :]), 2 * wa - wb, atol=1e-6, rtol=0)
+            exchange = -ej * eps_p * sine * resonant  # minus = chosen π pump-phase shift; cos supplies 1/2
+            raw_g = exchange[1, 2 * nb].real / np.sqrt(2)  # |2,0> -> |0,1> low-occupancy calibration
+            if calibrate:
+                exchange = exchange * g2 / raw_g  # separate a recalibratable g shift from number dependence
+            return dq.asqarray(exchange, dims=(na, nb), layout=dq.dia), raw_g
+
+
+        def extension_waveform(spec):
+            duration, peak = spec["duration"], spec["peak"]
+            kind = spec["kind"]
+            coefficients = jnp.asarray(spec.get("coefficients", [0.0]))
+            def envelope(t):
+                if kind.startswith("closed"):
+                    value = jnp.sin(jnp.pi*t/duration)**2 * jnp.sum(coefficients*jnp.cos(jnp.arange(len(coefficients))*jnp.pi*t/duration))
+                elif kind == "resonant":
+                    value = jnp.sin(jnp.pi*t/duration)**2 * jnp.cos(2*g2*alpha*t)
+                elif kind == "flat":
+                    edge = 0.02  # finite 20 ns ramps; an ideal step would have infinite bandwidth
+                    value = jnp.sin(jnp.pi/2*jnp.minimum(jnp.minimum(t, duration-t)/edge, 1.0))**2
+                else:
+                    value = 0.0*t  # idle reference
+                return jnp.where((t >= 0) & (t < duration), peak*value, 0.0)
+            return envelope
+
+
+        def extension_run(spec, na=24, nb=6, tolerance=2e-12, coupling_factor=1.0, corrected=False, sign=1):
+            h, jumps, ops, a, b = two_mode(na, nb, coupling=g2*coupling_factor)
+            if corrected:
+                exchange, _ = sine_exchange(na, nb, calibrate=True)
+                h = exchange - g2*alpha**2*(b+b.dag())  # same calibrated circuit correction as above
+            times = np.linspace(0, 3, 601)  # saved grid; adaptive integration uses much smaller internal steps
+            initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))
+            base_path = run_key(h, jumps, initial, times, ops, 100*tolerance, tolerance)
+            digest = hashlib.sha256((base_path.stem + json.dumps(spec, sort_keys=True) + "closed-pulse-v1").encode()).hexdigest()
+            path = base_path.with_name(digest + ".npz")  # include the entire pulse and the actual model in the cache key
+            if path.exists():
+                with np.load(path, allow_pickle=False) as saved:
+                    run = {name: saved[name] for name in ["t", "e", "rho"]}
+                    run["final"] = dq.asqarray(saved["final"], dims=(na, nb))
+            else:
+                edges = sorted(set([0.02, spec["duration"]-0.02, spec["duration"]]))
+                driven = h + dq.modulated(extension_waveform(spec), a+a.dag(), discontinuity_ts=edges)
+                run = evolve(driven, jumps, initial, times, ops, (na, nb), rtol=100*tolerance, atol=tolerance)
+                save_run(path, run)
+            even = np.asarray(dq.to_numpy(cat_ket(na, alpha, 1))).ravel()
+            odd = np.asarray(dq.to_numpy(cat_ket(na, alpha, -1))).ravel()
+            wrong = (even-sign*odd)/np.sqrt(2)
+            wrong_t = np.einsum("i,tij,j->t", wrong.conj(), run["rho"], wrong).real
+            in_code = sum(np.einsum("i,tij,j->t", cat.conj(), run["rho"], cat).real for cat in [even, odd])
+            run.update({"wrong": float(wrong_t[-1]), "leakage": float(1-in_code[-1]),
+                        "wrong trace": wrong_t, "leakage trace": 1-in_code,
+                        "information": float(4*kb*np.trapezoid(run["e"][3].real**2, times)),
+                        "spec": dict(spec), "checks": checks(run)})
+            return run
+
+
+        def trajectory_batch(spec, sign, seed, count=128, dt=0.0001, na=24, nb=6, map_normalization=False):
+            h, jumps, ops, a, b = two_mode(na, nb)
+            initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))
+            times = np.linspace(0, 3, 601)  # 5 ns record bins; dt is the finer stochastic integration step
+            base_path = run_key(h, jumps, initial, times, [ops[0]], dt, dt)
+            settings = {"pulse": spec, "seed": seed, "count": count, "dt": dt,
+                        "method": "Rouchon1-normalized-v1" if map_normalization else "Rouchon1-ket-normalized-v1"}
+            digest = hashlib.sha256((base_path.stem+json.dumps(settings, sort_keys=True)).encode()).hexdigest()
+            path = base_path.with_name("records-"+digest+".npz")
+            if path.exists():
+                with np.load(path, allow_pickle=False) as saved:
+                    return {key: saved[key] for key in saved.files}
+            driven = h+dq.modulated(extension_waveform(spec), a+a.dag())  # smooth edges are resolved by the fixed step
+            keys = jax.random.split(jax.random.key(seed), count)  # independent seeds are recorded for reproducibility
+            started = time.monotonic()
+            result = dq.dssesolve(driven, jumps, initial, times, keys, exp_ops=[ops[0]],
+                                 method=dq.method.Rouchon1(dt=dt, normalize=map_normalization), save_states=False)
+            # both variants normalize each ket; the expensive option also corrects the discrete Kraus map
+            records = np.asarray(result.measurements)[:, 0, :]  # buffer channel only; do not leak the memory record
+            final_n = np.asarray(result.expects)[:, 0, -1].real
+            assert np.isfinite(records).all() and np.isfinite(final_n).all()
+            output = {"t": times, "records": records, "final_n": final_n}
+            np.savez_compressed(path, **output)
+            print(f"{spec['kind']} sign {sign:+d}: {count} trajectories, dt={dt:g}, ({na},{nb}), {time.monotonic()-started:.1f}s", flush=True)
+            return output
+
+
+        def wilson_interval(errors, count):
+            z = 1.959963984540054  # two-sided 95% binomial score interval, not sqrt(p) error bars
+            p = errors/count
+            center = (p+z*z/(2*count))/(1+z*z/count)
+            half = z*np.sqrt(p*(1-p)/count+z*z/(4*count*count))/(1+z*z/count)
+            return float(center-half), float(center+half)
+
+
+        def score_records(batch, template):
+            times = batch["t"]
+            weight = 2*np.sqrt(kb)*np.interp(times, template["t"], template["e"][3].real)
+            weight = (weight[:-1]+weight[1:])/2  # bin-average approximation; bins are short compared with ringing
+            widths = np.diff(times)
+            normalization = np.sqrt(np.sum(weight*weight*widths))
+            return batch["records"] @ (weight*widths) / normalization
+
+        selected_specs = {
+            "flat": {
+                "kind": "flat",
+                "duration": 1.5,
+                "peak": 1.7840005748911953
+            },
+            "resonant": {
+                "kind": "resonant",
+                "duration": 1.5,
+                "peak": 2.1391168533021583
+            },
+            "closed": {
+                "kind": "closed nominal",
+                "duration": 1.5,
+                "coefficients": [
+                    -0.6746844318247125,
+                    -5.24338332425097,
+                    -1.3494932750752813,
+                    -5.007630191024599,
+                    -1.3489265537688762,
+                    -4.5021024573826445,
+                    -1.3429396969528073,
+                    -3.6227892943858127,
+                    -1.306672468697821,
+                    -1.8902545483245554,
+                    0.3135432669218839,
+                    -0.6635214864244275,
+                    0.1124363541823458,
+                    -0.1871366514170797,
+                    0.03132103329410212
+                ],
+                "peak": 1.8795341516644681
+            }
+        }  # frozen controls selected in the earlier experiment
+    print("numerical mode: model setup restored; matching caches are reused, and cache misses run new solves.")
+
+    from scipy.stats import norm  # converts a desired gaussian assignment error to an information budget
+
+    audit_criteria = {"information relative": 0.005, "assignment difference": 0.03,
+                      "rate absolute floor": 1e-8, "leakage threshold": 1e-4}
+    audit_period = 3.0  # drive, listen and recover; do not reset the buffer between cycles
+    audit_cycles = 9  # fixed before inspecting the repeated-cycle rates
+
+
+    def audit_ready(run, target=extension_target, leakage_limit=1e-4):
+        information = 4*kb*cumulative_trapezoid(run["e"][3].real**2, run["t"], initial=0)
+        good = (information >= 0.99*target) & (run["leakage trace"] <= leakage_limit)
+        stable = np.logical_and.accumulate(good[::-1])[::-1]
+        indices = np.flatnonzero(stable & (run["t"] >= run["spec"]["duration"]))
+        return float(run["t"][indices[0]]) if len(indices) else np.nan
+
+
+    def audit_match(spec, coupling_factor=1.0, corrected=False, na=32, nb=8):
+        trial = dict(spec)  # calibrate amplitude, keep the pulse shape and its duration frozen
         run = extension_run(trial, na, nb, coupling_factor=coupling_factor, corrected=corrected)
-    return run, False
+        for _ in range(5):
+            if abs(run["information"]/extension_target-1) <= audit_criteria["information relative"]:
+                return run, True
+            trial = dict(trial, peak=float(trial["peak"]*np.sqrt(extension_target/run["information"])))
+            if trial["peak"] > design_peak_limit:
+                return run, False  # infeasible under the original hardware cap
+            run = extension_run(trial, na, nb, coupling_factor=coupling_factor, corrected=corrected)
+        return run, False
 
 
-calibrated_rows, calibrated_runs = [], {}
-for condition, factor, corrected in [("nominal", 1.0, False), ("coupling -5%", 0.95, False),
-                                      ("coupling +5%", 1.05, False), ("resonant sine", 1.0, True)]:
-    for label in ["flat", "resonant", "closed"]:
-        run, feasible = audit_match(selected_specs[label], factor, corrected)
-        calibrated_runs[(condition, label)] = run
-        row = {"condition": condition, "pulse": label, "feasible": feasible,
-               "peak/g2": run["spec"]["peak"]/g2, "information": run["information"],
-               "wrong": run["wrong"], "leakage": run["leakage"],
-               "wrong + leakage": run["wrong"]+run["leakage"],
-               "ready us": audit_ready(run), "min eigenvalue": run["checks"]["min eigenvalue"]}
-        calibrated_rows.append(row)
-        print("amplitude recalibration:", row, flush=True)
-table(pd.DataFrame(calibrated_rows), "audit_equal_information_circuit")
+    calibrated_rows, calibrated_runs = [], {}
+    for condition, factor, corrected in [("nominal", 1.0, False), ("coupling -5%", 0.95, False),
+                                          ("coupling +5%", 1.05, False), ("resonant sine", 1.0, True)]:
+        for label in ["flat", "resonant", "closed"]:
+            run, feasible = audit_match(selected_specs[label], factor, corrected)
+            calibrated_runs[(condition, label)] = run
+            row = {"condition": condition, "pulse": label, "feasible": feasible,
+                   "peak/g2": run["spec"]["peak"]/g2, "information": run["information"],
+                   "wrong": run["wrong"], "leakage": run["leakage"],
+                   "wrong + leakage": run["wrong"]+run["leakage"],
+                   "ready us": audit_ready(run), "min eigenvalue": run["checks"]["min eigenvalue"]}
+            calibrated_rows.append(row)
+            print("amplitude recalibration:", row, flush=True)
+    table(pd.DataFrame(calibrated_rows), "audit_equal_information_circuit")
 
 # %% [markdown]
 # one pulse versus preserving the bit over repeated measurements
@@ -1495,87 +1795,95 @@ table(pd.DataFrame(calibrated_rows), "audit_equal_information_circuit")
 # unresolved, rather than divided into a huge, unreliable enhancement factor.
 
 # %%
-def audit_cycle_run(spec, na=24, nb=6, cycles=audit_cycles, tolerance=2e-12):
-    h, jumps, ops, a, b = two_mode(na, nb)
-    times = np.linspace(0, audit_period*cycles, 120*cycles+1)  # 25 ns samples plus exact cycle endpoints
-    even = cat_ket(na, alpha, 1)
-    odd = cat_ket(na, alpha, -1)
-    zero, one = (even+odd)/np.sqrt(2), (even-odd)/np.sqrt(2)
-    logical_z = dq.tensor(dq.todm(zero)-dq.todm(one), dq.eye(nb))
-    cycle_ops = [*ops, logical_z]  # code-space contrast, with leakage reported independently
-    initial = dq.tensor(zero, dq.fock(nb, 0))  # exactly orthogonal logical input for this rate test
-    base = run_key(h, jumps, initial, times, cycle_ops, 100*tolerance, tolerance)
-    digest = hashlib.sha256((base.stem+json.dumps(spec, sort_keys=True)+"periodic-readout-v1").encode()).hexdigest()
-    path = base.with_name(digest+".npz")
-    if path.exists():
-        with np.load(path, allow_pickle=False) as saved:
-            run = {key: saved[key] for key in ["t", "e", "rho"]}
-            run["final"] = dq.asqarray(saved["final"], dims=(na, nb))
-    else:
-        envelope = extension_waveform(spec)
-        repeated = lambda t: envelope(jnp.mod(t, audit_period))
-        edges = sorted(set(float(c*audit_period+edge) for c in range(cycles)
-                           for edge in [0.0, 0.02, spec["duration"]-0.02, spec["duration"]]))
-        driven = h+dq.modulated(repeated, a+a.dag(), discontinuity_ts=edges)
-        run = evolve(driven, jumps, initial, times, cycle_ops, (na, nb), rtol=100*tolerance, atol=tolerance)
-        save_run(path, run)
-    zero_array, one_array = [np.asarray(dq.to_numpy(ket)).ravel() for ket in [zero, one]]
-    populations = [np.einsum("i,tij,j->t", ket.conj(), run["rho"], ket).real for ket in [zero_array, one_array]]
-    run.update({"wrong trace": populations[1], "leakage trace": 1-populations[0]-populations[1],
-                "information trace": 4*kb*cumulative_trapezoid(run["e"][3].real**2, times, initial=0),
-                "spec": dict(spec), "checks": checks(run)})
-    return run
+if "audit_load_saved" not in globals():
+    raise RuntimeError("run the first addendum cell (audit_load_saved = True) once; it reloads saved results without rerunning the earlier tasks")
+
+if audit_load_saved:
+    cycle_table = audit_saved_table("audit_repeated_cycle_rates")
+    protection_table = audit_saved_table("audit_bit_protection")
+    audit_saved_figure("18_repeated_measurement_cost")
+else:
+    def audit_cycle_run(spec, na=24, nb=6, cycles=audit_cycles, tolerance=2e-12):
+        h, jumps, ops, a, b = two_mode(na, nb)
+        times = np.linspace(0, audit_period*cycles, 120*cycles+1)  # 25 ns samples plus exact cycle endpoints
+        even = cat_ket(na, alpha, 1)
+        odd = cat_ket(na, alpha, -1)
+        zero, one = (even+odd)/np.sqrt(2), (even-odd)/np.sqrt(2)
+        logical_z = dq.tensor(dq.todm(zero)-dq.todm(one), dq.eye(nb))
+        cycle_ops = [*ops, logical_z]  # code-space contrast, with leakage reported independently
+        initial = dq.tensor(zero, dq.fock(nb, 0))  # exactly orthogonal logical input for this rate test
+        base = run_key(h, jumps, initial, times, cycle_ops, 100*tolerance, tolerance)
+        digest = hashlib.sha256((base.stem+json.dumps(spec, sort_keys=True)+"periodic-readout-v1").encode()).hexdigest()
+        path = base.with_name(digest+".npz")
+        if path.exists():
+            with np.load(path, allow_pickle=False) as saved:
+                run = {key: saved[key] for key in ["t", "e", "rho"]}
+                run["final"] = dq.asqarray(saved["final"], dims=(na, nb))
+        else:
+            envelope = extension_waveform(spec)
+            repeated = lambda t: envelope(jnp.mod(t, audit_period))
+            edges = sorted(set(float(c*audit_period+edge) for c in range(cycles)
+                               for edge in [0.0, 0.02, spec["duration"]-0.02, spec["duration"]]))
+            driven = h+dq.modulated(repeated, a+a.dag(), discontinuity_ts=edges)
+            run = evolve(driven, jumps, initial, times, cycle_ops, (na, nb), rtol=100*tolerance, atol=tolerance)
+            save_run(path, run)
+        zero_array, one_array = [np.asarray(dq.to_numpy(ket)).ravel() for ket in [zero, one]]
+        populations = [np.einsum("i,tij,j->t", ket.conj(), run["rho"], ket).real for ket in [zero_array, one_array]]
+        run.update({"wrong trace": populations[1], "leakage trace": 1-populations[0]-populations[1],
+                    "information trace": 4*kb*cumulative_trapezoid(run["e"][3].real**2, times, initial=0),
+                    "spec": dict(spec), "checks": checks(run)})
+        return run
 
 
-def audit_cycle_fit(run):
-    endpoint_indices = np.arange(0, len(run["t"]), 120)
-    times, contrast = run["t"][endpoint_indices], run["e"][-1, endpoint_indices].real
-    fits = []
-    for discard in [2, 3]:
-        x, y = times[discard:], np.log(contrast[discard:])  # discard initial relaxation into the repeating schedule
-        coefficients, covariance = np.polyfit(x, y, 1, cov=True)
-        residual = y-np.polyval(coefficients, x)
-        fits.append({"rate": float(-coefficients[0]), "fit standard error": float(np.sqrt(covariance[0, 0])),
-                     "fit max log residual": float(np.max(abs(residual)))})
-    return {**fits[0], "window change": abs(fits[0]["rate"]-fits[1]["rate"])}
+    def audit_cycle_fit(run):
+        endpoint_indices = np.arange(0, len(run["t"]), 120)
+        times, contrast = run["t"][endpoint_indices], run["e"][-1, endpoint_indices].real
+        fits = []
+        for discard in [2, 3]:
+            x, y = times[discard:], np.log(contrast[discard:])  # discard initial relaxation into the repeating schedule
+            coefficients, covariance = np.polyfit(x, y, 1, cov=True)
+            residual = y-np.polyval(coefficients, x)
+            fits.append({"rate": float(-coefficients[0]), "fit standard error": float(np.sqrt(covariance[0, 0])),
+                         "fit max log residual": float(np.max(abs(residual)))})
+        return {**fits[0], "window change": abs(fits[0]["rate"]-fits[1]["rate"])}
 
 
-cycle_runs, cycle_rows = {}, []
-idle_spec = {"kind": "idle", "duration": 1.5, "peak": 0.0}
-for label, spec in {"idle": idle_spec, **selected_specs}.items():
-    for na, nb in [(24, 6), (32, 8)]:
-        run = audit_cycle_run(spec, na, nb)
-        cycle_runs[(label, na, nb)] = run
-        fit = audit_cycle_fit(run)
-        cycle_rows.append({"pulse": label, "na": na, "nb": nb, **fit,
-                           "wrong at end": float(run["wrong trace"][-1]),
-                           "leakage at end": float(run["leakage trace"][-1]),
-                           "min eigenvalue": run["checks"]["min eigenvalue"]})
-        print("repeated measurement:", cycle_rows[-1], flush=True)
-cycle_table = pd.DataFrame(cycle_rows)
-table(cycle_table, "audit_repeated_cycle_rates")
+    cycle_runs, cycle_rows = {}, []
+    idle_spec = {"kind": "idle", "duration": 1.5, "peak": 0.0}
+    for label, spec in {"idle": idle_spec, **selected_specs}.items():
+        for na, nb in [(24, 6), (32, 8)]:
+            run = audit_cycle_run(spec, na, nb)
+            cycle_runs[(label, na, nb)] = run
+            fit = audit_cycle_fit(run)
+            cycle_rows.append({"pulse": label, "na": na, "nb": nb, **fit,
+                               "wrong at end": float(run["wrong trace"][-1]),
+                               "leakage at end": float(run["leakage trace"][-1]),
+                               "min eigenvalue": run["checks"]["min eigenvalue"]})
+            print("repeated measurement:", cycle_rows[-1], flush=True)
+    cycle_table = pd.DataFrame(cycle_rows)
+    table(cycle_table, "audit_repeated_cycle_rates")
 
-protection_rows = []
-for label in ["idle", "flat", "resonant", "closed"]:
-    small, large = [cycle_table[(cycle_table["pulse"] == label) & (cycle_table["na"] == n)].iloc[0] for n in [24, 32]]
-    uncertainty = max(audit_criteria["rate absolute floor"], abs(large["rate"]-small["rate"]),
-                      large["window change"], 3*large["fit standard error"])
-    protection_rows.append({"pulse": label, "cycle contrast rate per us": large["rate"],
-                            "equivalent symmetric flip probability per cycle": float(-0.5*np.expm1(-large["rate"]*audit_period)),
-                            "numerical uncertainty indicator": uncertainty,
-                            "resolved above numerical indicator": bool(large["rate"] > 3*uncertainty)})
-protection_table = pd.DataFrame(protection_rows)
-table(protection_table, "audit_bit_protection")
-fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
-for label in ["idle", "flat", "resonant", "closed"]:
-    run = cycle_runs[(label, 32, 8)]
-    indices = np.arange(0, len(run["t"]), 120)
-    axes[0].plot(run["t"][indices], run["e"][-1, indices].real, "o-", label=label)
-    axes[1].plot(run["t"][indices[1:]], run["wrong trace"][indices[1:]]+run["leakage trace"][indices[1:]], "o-", label=label)  # start after cycle one; zero error at preparation has no logarithm
-axes[0].set(xlabel="elapsed time (μs)", ylabel="logical-bit contrast")
-axes[1].set(xlabel="elapsed time (μs)", ylabel="wrong codeword + leakage", yscale="log")
-axes[0].legend()
-finish_figure(fig, "18_repeated_measurement_cost")
+    protection_rows = []
+    for label in ["idle", "flat", "resonant", "closed"]:
+        small, large = [cycle_table[(cycle_table["pulse"] == label) & (cycle_table["na"] == n)].iloc[0] for n in [24, 32]]
+        uncertainty = max(audit_criteria["rate absolute floor"], abs(large["rate"]-small["rate"]),
+                          large["window change"], 3*large["fit standard error"])
+        protection_rows.append({"pulse": label, "cycle contrast rate per us": large["rate"],
+                                "equivalent symmetric flip probability per cycle": float(-0.5*np.expm1(-large["rate"]*audit_period)),
+                                "numerical uncertainty indicator": uncertainty,
+                                "resolved above numerical indicator": bool(large["rate"] > 3*uncertainty)})
+    protection_table = pd.DataFrame(protection_rows)
+    table(protection_table, "audit_bit_protection")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+    for label in ["idle", "flat", "resonant", "closed"]:
+        run = cycle_runs[(label, 32, 8)]
+        indices = np.arange(0, len(run["t"]), 120)
+        axes[0].plot(run["t"][indices], run["e"][-1, indices].real, "o-", label=label)
+        axes[1].plot(run["t"][indices[1:]], run["wrong trace"][indices[1:]]+run["leakage trace"][indices[1:]], "o-", label=label)  # start after cycle one; zero error at preparation has no logarithm
+    axes[0].set(xlabel="elapsed time (μs)", ylabel="logical-bit contrast")
+    axes[1].set(xlabel="elapsed time (μs)", ylabel="wrong codeword + leakage", yscale="log")
+    axes[0].legend()
+    finish_figure(fig, "18_repeated_measurement_cost")
 
 # %% [markdown]
 # a statistical follow-up with enough power to answer the chosen question
@@ -1595,98 +1903,107 @@ finish_figure(fig, "18_repeated_measurement_cost")
 # +/-3 points; failing it means this experiment did not establish equivalence.
 
 # %%
-power_rows = []
-for name, n_reference, n_check in [("original validation", 2048, 512), ("new independent validation", 6144, 4096)]:
-    standard_error = np.sqrt(0.19*0.81*(1/n_reference+1/n_check))  # planning estimate, not a fitted outcome
-    halfwidth = norm.ppf(0.975)*standard_error
-    power = max(0.0, float(2*norm.cdf((0.03-halfwidth)/standard_error)-1))
-    power_rows.append({"comparison": name, "reference shots": n_reference, "check shots": n_check,
-                       "planned 95% halfwidth": halfwidth, "approx equivalence power if difference=0": power})
-table(pd.DataFrame(power_rows), "audit_statistical_plan")
+if "audit_load_saved" not in globals():
+    raise RuntimeError("run the first addendum cell (audit_load_saved = True) once; it reloads saved results without rerunning the earlier tasks")
+
+if audit_load_saved:
+    audit_saved_table("audit_statistical_plan")
+    precision_table = audit_saved_table("audit_assignment_precision")
+    precision_check_table = audit_saved_table("audit_assignment_validation")
+    precision_comparison = audit_saved_table("audit_assignment_comparison")
+else:
+    power_rows = []
+    for name, n_reference, n_check in [("original validation", 2048, 512), ("new independent validation", 6144, 4096)]:
+        standard_error = np.sqrt(0.19*0.81*(1/n_reference+1/n_check))  # planning estimate, not a fitted outcome
+        halfwidth = norm.ppf(0.975)*standard_error
+        power = max(0.0, float(2*norm.cdf((0.03-halfwidth)/standard_error)-1))
+        power_rows.append({"comparison": name, "reference shots": n_reference, "check shots": n_check,
+                           "planned 95% halfwidth": halfwidth, "approx equivalence power if difference=0": power})
+    table(pd.DataFrame(power_rows), "audit_statistical_plan")
 
 
-def audit_paired_interval(differences):
-    from scipy.stats import beta  # exact binomial bounds also handle zero observed disagreements
-    differences = np.asarray(differences)
-    count = len(differences)
-    bounds = []
-    for direction in [1, -1]:
-        events = int(np.count_nonzero(differences == direction))
-        low = 0.0 if events == 0 else beta.ppf(0.0125, events, count-events+1)
-        high = 1.0 if events == count else beta.ppf(0.9875, events+1, count-events)
-        bounds.append((low, high))  # two 97.5% marginal intervals give at least 95% jointly by the union bound
-    return float(bounds[0][0]-bounds[1][1]), float(bounds[0][1]-bounds[1][0])
-
-precision_samples, precision_rows = {}, []
-for label in ["flat", "closed"]:
-    spec = selected_specs[label]
-    template = extension_run(spec, 24, 6)
-    for sign in [1, -1]:
-        scores = []
-        for repeat in range(2):
-            original = trajectory_batch(spec, sign, 20261024+1000*(sign < 0)+repeat, count=512)
-            scores.extend(score_records(original, template))  # same original sample, no double counting
-        for repeat in range(2):
-            new = trajectory_batch(spec, sign, 40261025+1000*(sign < 0)+repeat, count=1024)
-            scores.extend(score_records(new, template))
-        scores = np.asarray(scores)
-        precision_samples[(label, sign)] = {"scores": scores, "errors": sign*scores <= 0}
-    errors = np.concatenate([precision_samples[(label, sign)]["errors"] for sign in [1, -1]])
-    low, high = wilson_interval(int(errors.sum()), len(errors))
-    precision_rows.append({"pulse": label, "shots": len(errors), "errors": int(errors.sum()),
-                           "assignment error": float(errors.mean()), "95% low": low, "95% high": high})
-    print("larger reference sample:", precision_rows[-1], flush=True)
-precision_table = pd.DataFrame(precision_rows)
-table(precision_table, "audit_assignment_precision")
-
-precision_check_rows = []
-for label in ["flat", "closed"]:
-    spec = selected_specs[label]
-    template = extension_run(spec, 24, 6)
-    reference = np.concatenate([precision_samples[(label, sign)]["errors"] for sign in [1, -1]])
-    halfstep_errors = []
-    for sign in [1, -1]:
-        for repeat in range(2):
-            batch = trajectory_batch(spec, sign, 50261025+1000*(sign < 0)+repeat, count=1024, dt=0.00005)
-            halfstep_errors.extend(sign*score_records(batch, template) <= 0)
-    halfstep_errors = np.asarray(halfstep_errors, dtype=float)
-    delta = halfstep_errors.mean()-reference.mean()
-    half = 1.96*np.sqrt(halfstep_errors.var(ddof=1)/len(halfstep_errors)+reference.var(ddof=1)/len(reference))
-    precision_check_rows.append({"pulse": label, "test": "independent half timestep", "shots": len(halfstep_errors),
-                                 "assignment error": halfstep_errors.mean(), "difference": delta,
-                                 "95% low": delta-half, "95% high": delta+half,
-                                 "equivalent within 3 points": bool(abs(delta)+half < 0.03)})
-    print("precision check:", precision_check_rows[-1], flush=True)
-    for condition, na, nb, normalized in [("paired larger cutoffs", 32, 8, False),
-                                          ("paired normalized map", 24, 6, True)]:
-        differences, checked_errors = [], []
-        check_template = extension_run(spec, na, nb)
-        for sign in [1, -1]:
-            seed = 20261024+1000*(sign < 0)  # same 512 keys and dt as the corresponding original reference batch
-            base = trajectory_batch(spec, sign, seed, count=512)
-            checked = trajectory_batch(spec, sign, seed, count=512, na=na, nb=nb, map_normalization=normalized)
-            base_error = sign*score_records(base, template) <= 0
-            checked_error = sign*score_records(checked, check_template) <= 0
-            differences.extend(checked_error.astype(float)-base_error.astype(float))
-            checked_errors.extend(checked_error)
+    def audit_paired_interval(differences):
+        from scipy.stats import beta  # exact binomial bounds also handle zero observed disagreements
         differences = np.asarray(differences)
-        delta = differences.mean()
-        low, high = audit_paired_interval(differences)
-        precision_check_rows.append({"pulse": label, "test": condition, "shots": len(differences),
-                                     "assignment error": np.mean(checked_errors), "difference": delta,
-                                     "95% low": low, "95% high": high,
-                                     "equivalent within 3 points": bool(low > -0.03 and high < 0.03)})
-        print("precision check:", precision_check_rows[-1], flush=True)
-precision_check_table = pd.DataFrame(precision_check_rows)
-table(precision_check_table, "audit_assignment_validation")
+        count = len(differences)
+        bounds = []
+        for direction in [1, -1]:
+            events = int(np.count_nonzero(differences == direction))
+            low = 0.0 if events == 0 else beta.ppf(0.0125, events, count-events+1)
+            high = 1.0 if events == count else beta.ppf(0.9875, events+1, count-events)
+            bounds.append((low, high))  # two 97.5% marginal intervals give at least 95% jointly by the union bound
+        return float(bounds[0][0]-bounds[1][1]), float(bounds[0][1]-bounds[1][0])
 
-precision_difference = np.concatenate([precision_samples[("closed", sign)]["errors"].astype(float)
-                                       - precision_samples[("flat", sign)]["errors"].astype(float) for sign in [1, -1]])
-precision_low, precision_high = audit_paired_interval(precision_difference)
-precision_comparison = pd.DataFrame([{"comparison": "closed minus flat", "difference": precision_difference.mean(),
-                                      "95% low": precision_low, "95% high": precision_high,
-                                      "equivalent within 3 points": bool(precision_low > -0.03 and precision_high < 0.03)}])
-table(precision_comparison, "audit_assignment_comparison")
+    precision_samples, precision_rows = {}, []
+    for label in ["flat", "closed"]:
+        spec = selected_specs[label]
+        template = extension_run(spec, 24, 6)
+        for sign in [1, -1]:
+            scores = []
+            for repeat in range(2):
+                original = trajectory_batch(spec, sign, 20261024+1000*(sign < 0)+repeat, count=512)
+                scores.extend(score_records(original, template))  # same original sample, no double counting
+            for repeat in range(2):
+                new = trajectory_batch(spec, sign, 40261025+1000*(sign < 0)+repeat, count=1024)
+                scores.extend(score_records(new, template))
+            scores = np.asarray(scores)
+            precision_samples[(label, sign)] = {"scores": scores, "errors": sign*scores <= 0}
+        errors = np.concatenate([precision_samples[(label, sign)]["errors"] for sign in [1, -1]])
+        low, high = wilson_interval(int(errors.sum()), len(errors))
+        precision_rows.append({"pulse": label, "shots": len(errors), "errors": int(errors.sum()),
+                               "assignment error": float(errors.mean()), "95% low": low, "95% high": high})
+        print("larger reference sample:", precision_rows[-1], flush=True)
+    precision_table = pd.DataFrame(precision_rows)
+    table(precision_table, "audit_assignment_precision")
+
+    precision_check_rows = []
+    for label in ["flat", "closed"]:
+        spec = selected_specs[label]
+        template = extension_run(spec, 24, 6)
+        reference = np.concatenate([precision_samples[(label, sign)]["errors"] for sign in [1, -1]])
+        halfstep_errors = []
+        for sign in [1, -1]:
+            for repeat in range(2):
+                batch = trajectory_batch(spec, sign, 50261025+1000*(sign < 0)+repeat, count=1024, dt=0.00005)
+                halfstep_errors.extend(sign*score_records(batch, template) <= 0)
+        halfstep_errors = np.asarray(halfstep_errors, dtype=float)
+        delta = halfstep_errors.mean()-reference.mean()
+        half = 1.96*np.sqrt(halfstep_errors.var(ddof=1)/len(halfstep_errors)+reference.var(ddof=1)/len(reference))
+        precision_check_rows.append({"pulse": label, "test": "independent half timestep", "shots": len(halfstep_errors),
+                                     "assignment error": halfstep_errors.mean(), "difference": delta,
+                                     "95% low": delta-half, "95% high": delta+half,
+                                     "equivalent within 3 points": bool(abs(delta)+half < 0.03)})
+        print("precision check:", precision_check_rows[-1], flush=True)
+        for condition, na, nb, normalized in [("paired larger cutoffs", 32, 8, False),
+                                              ("paired normalized map", 24, 6, True)]:
+            differences, checked_errors = [], []
+            check_template = extension_run(spec, na, nb)
+            for sign in [1, -1]:
+                seed = 20261024+1000*(sign < 0)  # same 512 keys and dt as the corresponding original reference batch
+                base = trajectory_batch(spec, sign, seed, count=512)
+                checked = trajectory_batch(spec, sign, seed, count=512, na=na, nb=nb, map_normalization=normalized)
+                base_error = sign*score_records(base, template) <= 0
+                checked_error = sign*score_records(checked, check_template) <= 0
+                differences.extend(checked_error.astype(float)-base_error.astype(float))
+                checked_errors.extend(checked_error)
+            differences = np.asarray(differences)
+            delta = differences.mean()
+            low, high = audit_paired_interval(differences)
+            precision_check_rows.append({"pulse": label, "test": condition, "shots": len(differences),
+                                         "assignment error": np.mean(checked_errors), "difference": delta,
+                                         "95% low": low, "95% high": high,
+                                         "equivalent within 3 points": bool(low > -0.03 and high < 0.03)})
+            print("precision check:", precision_check_rows[-1], flush=True)
+    precision_check_table = pd.DataFrame(precision_check_rows)
+    table(precision_check_table, "audit_assignment_validation")
+
+    precision_difference = np.concatenate([precision_samples[("closed", sign)]["errors"].astype(float)
+                                           - precision_samples[("flat", sign)]["errors"].astype(float) for sign in [1, -1]])
+    precision_low, precision_high = audit_paired_interval(precision_difference)
+    precision_comparison = pd.DataFrame([{"comparison": "closed minus flat", "difference": precision_difference.mean(),
+                                          "95% low": precision_low, "95% high": precision_high,
+                                          "equivalent within 3 points": bool(precision_low > -0.03 and precision_high < 0.03)}])
+    table(precision_comparison, "audit_assignment_comparison")
 
 # %% [markdown]
 # asking for a more reliable answer costs time and additional bit disturbance
@@ -1703,85 +2020,93 @@ table(precision_comparison, "audit_assignment_comparison")
 # certifying a one-percent error rate.
 
 # %%
-demand_rows = []
-for label in ["flat", "closed"]:
-    run = cycle_runs[(label, 32, 8)]
-    for target_error in [0.2, 0.1, 0.05, 0.01]:
-        required_information = float(norm.ppf(1-target_error)**2)
-        endpoints = np.arange(0, len(run["t"]), 120)
-        reached = endpoints[run["information trace"][endpoints] >= required_information]
-        index = int(reached[0]) if len(reached) else None
-        demand_rows.append({"pulse": label, "target gaussian assignment error": target_error,
-                            "required information": required_information,
-                            "first qualifying cycle": int(index/120) if index is not None else np.nan,
-                            "elapsed us": run["t"][index] if index is not None else np.nan,
-                            "wrong at that time": run["wrong trace"][index] if index is not None else np.nan,
-                            "leakage at that time": run["leakage trace"][index] if index is not None else np.nan})
-demand_table = pd.DataFrame(demand_rows)
-table(demand_table, "audit_readout_demand")
+if "audit_load_saved" not in globals():
+    raise RuntimeError("run the first addendum cell (audit_load_saved = True) once; it reloads saved results without rerunning the earlier tasks")
+
+if audit_load_saved:
+    demand_table = audit_saved_table("audit_readout_demand")
+    long_table = audit_saved_table("audit_long_readout")
+    audit_saved_figure("19_accuracy_and_bit_damage")
+else:
+    demand_rows = []
+    for label in ["flat", "closed"]:
+        run = cycle_runs[(label, 32, 8)]
+        for target_error in [0.2, 0.1, 0.05, 0.01]:
+            required_information = float(norm.ppf(1-target_error)**2)
+            endpoints = np.arange(0, len(run["t"]), 120)
+            reached = endpoints[run["information trace"][endpoints] >= required_information]
+            index = int(reached[0]) if len(reached) else None
+            demand_rows.append({"pulse": label, "target gaussian assignment error": target_error,
+                                "required information": required_information,
+                                "first qualifying cycle": int(index/120) if index is not None else np.nan,
+                                "elapsed us": run["t"][index] if index is not None else np.nan,
+                                "wrong at that time": run["wrong trace"][index] if index is not None else np.nan,
+                                "leakage at that time": run["leakage trace"][index] if index is not None else np.nan})
+    demand_table = pd.DataFrame(demand_rows)
+    table(demand_table, "audit_readout_demand")
 
 
-def audit_long_records(spec, sign, seed, count=256, cycles=7, na=24, nb=6):
-    h, jumps, ops, a, b = two_mode(na, nb)
-    initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))
-    times = np.linspace(0, audit_period*cycles, 600*cycles+1)  # retain the original 5 ns detector bins
-    dt = 0.0001
-    base = run_key(h, jumps, initial, times, [ops[0]], dt, dt)
-    settings = {"spec": spec, "seed": seed, "count": count, "cycles": cycles,
-                "method": "Rouchon1-ket-normalized-periodic-v1"}
-    digest = hashlib.sha256((base.stem+json.dumps(settings, sort_keys=True)).encode()).hexdigest()
-    path = base.with_name("long-records-"+digest+".npz")
-    if path.exists():
-        with np.load(path, allow_pickle=False) as saved:
-            return {key: saved[key] for key in saved.files}
-    envelope = extension_waveform(spec)
-    driven = h+dq.modulated(lambda t: envelope(jnp.mod(t, audit_period)), a+a.dag())
-    started = time.monotonic()
-    result = dq.dssesolve(driven, jumps, initial, times, jax.random.split(jax.random.key(seed), count),
-                         exp_ops=[ops[0]], method=dq.method.Rouchon1(dt=dt, normalize=False), save_states=False)
-    output = {"t": times, "records": np.asarray(result.measurements)[:, 0, :],
-              "final_n": np.asarray(result.expects)[:, 0, -1].real}
-    assert np.isfinite(output["records"]).all()
-    np.savez_compressed(path, **output)
-    print(f"long records: {spec['kind']}, sign {sign:+d}, {count} shots, {time.monotonic()-started:.1f}s", flush=True)
-    return output
+    def audit_long_records(spec, sign, seed, count=256, cycles=7, na=24, nb=6):
+        h, jumps, ops, a, b = two_mode(na, nb)
+        initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))
+        times = np.linspace(0, audit_period*cycles, 600*cycles+1)  # retain the original 5 ns detector bins
+        dt = 0.0001
+        base = run_key(h, jumps, initial, times, [ops[0]], dt, dt)
+        settings = {"spec": spec, "seed": seed, "count": count, "cycles": cycles,
+                    "method": "Rouchon1-ket-normalized-periodic-v1"}
+        digest = hashlib.sha256((base.stem+json.dumps(settings, sort_keys=True)).encode()).hexdigest()
+        path = base.with_name("long-records-"+digest+".npz")
+        if path.exists():
+            with np.load(path, allow_pickle=False) as saved:
+                return {key: saved[key] for key in saved.files}
+        envelope = extension_waveform(spec)
+        driven = h+dq.modulated(lambda t: envelope(jnp.mod(t, audit_period)), a+a.dag())
+        started = time.monotonic()
+        result = dq.dssesolve(driven, jumps, initial, times, jax.random.split(jax.random.key(seed), count),
+                             exp_ops=[ops[0]], method=dq.method.Rouchon1(dt=dt, normalize=False), save_states=False)
+        output = {"t": times, "records": np.asarray(result.measurements)[:, 0, :],
+                  "final_n": np.asarray(result.expects)[:, 0, -1].real}
+        assert np.isfinite(output["records"]).all()
+        np.savez_compressed(path, **output)
+        print(f"long records: {spec['kind']}, sign {sign:+d}, {count} shots, {time.monotonic()-started:.1f}s", flush=True)
+        return output
 
 
-long_rows = []
-for label in ["flat", "closed"]:
-    run = cycle_runs[(label, 24, 6)]
-    errors = []
-    for sign in [1, -1]:
-        batch = audit_long_records(selected_specs[label], sign, 60261025+1000*(sign < 0))
-        errors.extend(sign*score_records(batch, run) <= 0)
-    errors = np.asarray(errors)
-    low, high = wilson_interval(int(errors.sum()), len(errors))
-    reference = cycle_runs[(label, 32, 8)]
-    index = 7*120  # the same seven-cycle horizon, not the end of the nine-cycle deterministic run
-    long_rows.append({"pulse": label, "cycles": 7, "elapsed us": 21.0, "shots": len(errors),
-                      "assignment error": errors.mean(), "95% low": low, "95% high": high,
-                      "gaussian mean-signal estimate": 0.5*erfc(np.sqrt(reference["information trace"][index]/2)),
-                      "wrong at 21 us": reference["wrong trace"][index],
-                      "leakage at 21 us": reference["leakage trace"][index]})
-    print("demanding readout:", long_rows[-1], flush=True)
-long_table = pd.DataFrame(long_rows)
-table(long_table, "audit_long_readout")
-fig, axes = plt.subplots(1, 2, figsize=(10, 3.6))
-for label in ["flat", "closed"]:
-    run = cycle_runs[(label, 32, 8)]
-    indices = np.arange(120, len(run["t"]), 120)
-    gaussian_errors = 0.5*erfc(np.sqrt(run["information trace"][indices]/2))
-    axes[0].plot(run["t"][indices], gaussian_errors, "o-", label=label+" gaussian estimate")
-    axes[1].plot(gaussian_errors, run["wrong trace"][indices]+run["leakage trace"][indices], "o-", label=label)
-for _, row in long_table.iterrows():
-    axes[0].errorbar(row["elapsed us"], row["assignment error"],
-                    yerr=[[row["assignment error"]-row["95% low"]], [row["95% high"]-row["assignment error"]]],
-                    fmt="s", capsize=3, label=row["pulse"]+" actual records")
-axes[0].set(xlabel="measurement time (μs)", ylabel="assignment error", yscale="log")
-axes[1].set(xlabel="gaussian assignment estimate", ylabel="wrong codeword + leakage", xscale="log", yscale="log")
-axes[0].legend(fontsize=7)
-axes[1].legend()
-finish_figure(fig, "19_accuracy_and_bit_damage")
+    long_rows = []
+    for label in ["flat", "closed"]:
+        run = cycle_runs[(label, 24, 6)]
+        errors = []
+        for sign in [1, -1]:
+            batch = audit_long_records(selected_specs[label], sign, 60261025+1000*(sign < 0))
+            errors.extend(sign*score_records(batch, run) <= 0)
+        errors = np.asarray(errors)
+        low, high = wilson_interval(int(errors.sum()), len(errors))
+        reference = cycle_runs[(label, 32, 8)]
+        index = 7*120  # the same seven-cycle horizon, not the end of the nine-cycle deterministic run
+        long_rows.append({"pulse": label, "cycles": 7, "elapsed us": 21.0, "shots": len(errors),
+                          "assignment error": errors.mean(), "95% low": low, "95% high": high,
+                          "gaussian mean-signal estimate": 0.5*erfc(np.sqrt(reference["information trace"][index]/2)),
+                          "wrong at 21 us": reference["wrong trace"][index],
+                          "leakage at 21 us": reference["leakage trace"][index]})
+        print("demanding readout:", long_rows[-1], flush=True)
+    long_table = pd.DataFrame(long_rows)
+    table(long_table, "audit_long_readout")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6))
+    for label in ["flat", "closed"]:
+        run = cycle_runs[(label, 32, 8)]
+        indices = np.arange(120, len(run["t"]), 120)
+        gaussian_errors = 0.5*erfc(np.sqrt(run["information trace"][indices]/2))
+        axes[0].plot(run["t"][indices], gaussian_errors, "o-", label=label+" gaussian estimate")
+        axes[1].plot(gaussian_errors, run["wrong trace"][indices]+run["leakage trace"][indices], "o-", label=label)
+    for _, row in long_table.iterrows():
+        axes[0].errorbar(row["elapsed us"], row["assignment error"],
+                        yerr=[[row["assignment error"]-row["95% low"]], [row["95% high"]-row["assignment error"]]],
+                        fmt="s", capsize=3, label=row["pulse"]+" actual records")
+    axes[0].set(xlabel="measurement time (μs)", ylabel="assignment error", yscale="log")
+    axes[1].set(xlabel="gaussian assignment estimate", ylabel="wrong codeword + leakage", xscale="log", yscale="log")
+    axes[0].legend(fontsize=7)
+    axes[1].legend()
+    finish_figure(fig, "19_accuracy_and_bit_damage")
 
 # %% [markdown]
 # resource costs and a second cutoff for the recalibrated circuit test
@@ -1795,25 +2120,32 @@ finish_figure(fig, "19_accuracy_and_bit_damage")
 # that second cutoff.
 
 # %%
-resource_rows, circuit_check_rows = [], []
-resource_times = np.linspace(0, 3, 30001)
-for label, spec in selected_specs.items():
-    values = np.asarray(jax.vmap(extension_waveform(spec))(jnp.asarray(resource_times)))
-    resource_rows.append({"pulse": label, "actual peak/g2": np.max(abs(values))/g2,
-                          "integrated drive squared/g2 squared us": np.trapezoid(values**2, resource_times)/g2**2,
-                          "max envelope slew/g2 per us": np.max(abs(np.gradient(values, resource_times)))/g2})
-    assert np.max(abs(values)) <= design_peak_limit*(1+1e-8)
-    nominal = calibrated_runs[("resonant sine", label)]
-    held_out = extension_run(nominal["spec"], 36, 10, corrected=True)
-    circuit_check_rows.append({"pulse": label, "information at 32,8": nominal["information"],
-                               "information at 36,10": held_out["information"],
-                               "wrong + leakage at 32,8": nominal["wrong"]+nominal["leakage"],
-                               "wrong + leakage at 36,10": held_out["wrong"]+held_out["leakage"],
-                               "ready us at 36,10": audit_ready(held_out),
-                               "min eigenvalue at 36,10": held_out["checks"]["min eigenvalue"]})
-    print("circuit cutoff check:", circuit_check_rows[-1], flush=True)
-table(pd.DataFrame(resource_rows), "audit_control_resources")
-table(pd.DataFrame(circuit_check_rows), "audit_circuit_cutoffs")
+if "audit_load_saved" not in globals():
+    raise RuntimeError("run the first addendum cell (audit_load_saved = True) once; it reloads saved results without rerunning the earlier tasks")
+
+if audit_load_saved:
+    resource_rows = audit_saved_table("audit_control_resources").to_dict("records")
+    circuit_check_rows = audit_saved_table("audit_circuit_cutoffs").to_dict("records")
+else:
+    resource_rows, circuit_check_rows = [], []
+    resource_times = np.linspace(0, 3, 30001)
+    for label, spec in selected_specs.items():
+        values = np.asarray(jax.vmap(extension_waveform(spec))(jnp.asarray(resource_times)))
+        resource_rows.append({"pulse": label, "actual peak/g2": np.max(abs(values))/g2,
+                              "integrated drive squared/g2 squared us": np.trapezoid(values**2, resource_times)/g2**2,
+                              "max envelope slew/g2 per us": np.max(abs(np.gradient(values, resource_times)))/g2})
+        assert np.max(abs(values)) <= design_peak_limit*(1+1e-8)
+        nominal = calibrated_runs[("resonant sine", label)]
+        held_out = extension_run(nominal["spec"], 36, 10, corrected=True)
+        circuit_check_rows.append({"pulse": label, "information at 32,8": nominal["information"],
+                                   "information at 36,10": held_out["information"],
+                                   "wrong + leakage at 32,8": nominal["wrong"]+nominal["leakage"],
+                                   "wrong + leakage at 36,10": held_out["wrong"]+held_out["leakage"],
+                                   "ready us at 36,10": audit_ready(held_out),
+                                   "min eigenvalue at 36,10": held_out["checks"]["min eigenvalue"]})
+        print("circuit cutoff check:", circuit_check_rows[-1], flush=True)
+    table(pd.DataFrame(resource_rows), "audit_control_resources")
+    table(pd.DataFrame(circuit_check_rows), "audit_circuit_cutoffs")
 
 # %% [markdown]
 # what the completed calculations support
@@ -1827,63 +2159,72 @@ table(pd.DataFrame(circuit_check_rows), "audit_circuit_cutoffs")
 # specified rotating-frame model, not the full device noise budget.
 
 # %%
-from IPython.display import Markdown  # a short result-based interpretation inside the notebook
+if "audit_load_saved" not in globals():
+    raise RuntimeError("run the first addendum cell (audit_load_saved = True) once; it reloads saved results without rerunning the earlier tasks")
 
-final_nominal = pd.read_csv(artifacts / "closed_validation.csv").query("na == 36 and nb == 10").set_index("pulse")
-final_readiness = pd.read_csv(artifacts / "closed_readiness.csv").query("`leakage threshold` == 0.0001").set_index("pulse")
-damage_reduction = 1-final_nominal.loc["closed", "wrong + leakage"]/final_nominal.loc["flat", "wrong + leakage"]
-recovery_reduction = 1-final_readiness.loc["closed", "ready time us"]/final_readiness.loc["flat", "ready time us"]
-resonant_recovery_reduction = 1-final_readiness.loc["closed", "ready time us"]/final_readiness.loc["resonant", "ready time us"]
-final_rates = protection_table.set_index("pulse")
-final_precision = precision_table.set_index("pulse")
-final_long = long_table.set_index("pulse")
-equivalence_pass = bool(precision_comparison.iloc[0]["equivalent within 3 points"])
-validation_pass = bool(precision_check_table["equivalent within 3 points"].all())
-closed_rate = float(final_rates.loc["closed", "cycle contrast rate per us"])
-idle_rate = float(final_rates.loc["idle", "cycle contrast rate per us"])
-rate_resolution = float(final_rates.loc["idle", "numerical uncertainty indicator"])
-idle_resolved = bool(final_rates.loc["idle", "resolved above numerical indicator"])
-preservation_supported = bool(closed_rate <= idle_rate+3*rate_resolution)
-circuit_frame = pd.DataFrame(calibrated_rows)
-circuit_equal = bool(circuit_frame["feasible"].all() and (abs(circuit_frame["information"]/extension_target-1) <= audit_criteria["information relative"]).all())
-audit_summary = {"software_versions": versions, "original_sections_retained": True,
-                 "comparison": "ideal-model finite readout and a specified repeated measurement schedule",
-                 "wrong_plus_leakage_reduction_vs_flat": float(damage_reduction),
-                 "recovery_time_reduction_vs_flat": float(recovery_reduction),
-                 "recovery_time_reduction_vs_resonant": float(resonant_recovery_reduction),
-                 "equal_information_circuit_and_coupling_checks_pass": circuit_equal,
-                 "assignment_equivalence_within_3_points": equivalence_pass,
-                 "trajectory_validation_within_3_points": validation_pass,
-                 "closed_cycle_contrast_rate_per_us": closed_rate, "idle_cycle_contrast_rate_per_us": idle_rate,
-                 "idle_rate_resolved": idle_resolved, "idle_protection_preservation_supported": preservation_supported,
-                 "long_readout_cycles": 7, "long_readout_time_us": 21.0,
-                 "long_closed_assignment_error": float(final_long.loc["closed", "assignment error"]),
-                 "long_closed_assignment_95_interval": [float(final_long.loc["closed", "95% low"]), float(final_long.loc["closed", "95% high"])],
-                 "limits": ["ideal detector efficiency", "no thermal bath or microwave-line transfer function",
-                            "circuit corrections are resonant RWA corrections", "no established novelty claim",
-                            "repeated-cycle rate is not the stationary spectral rate of task 2.1"]}
-(artifacts / "audit_summary.json").write_text(json.dumps(audit_summary, indent=2))
-rate_sentence = (f"the repeated-cycle contrast decay is {closed_rate:.3g}/μs for the closed pulse and {idle_rate:.3g}/μs for idle. "
-                 + ("the idle rate is resolved by the stated numerical indicator. " if idle_resolved else "the idle-rate precision is limited by the stated numerical indicator. "))
-if idle_resolved and idle_rate > 0:
-    rate_sentence += f"the readout decay is roughly {closed_rate/idle_rate:.0f} times the idle value. "  # the cutoff indicator limits the precision of this ratio
-claim_sentence = ("preserving idle bit protection is consistent with this particular numerical test."
-                  if preservation_supported else "this does not preserve idle bit protection: the improvement is relative to another readout, and the measurement still adds substantial bit disturbance.")
-findings = (
-    f"the calculated pulse reduces wrong-codeword population plus leakage by {100*damage_reduction:.1f}% against the flat baseline at approximately equal mean-signal information. "
-    f"at the declared 1e-4 leakage threshold it recovers {100*recovery_reduction:.1f}% sooner than flat readout and {100*resonant_recovery_reduction:.1f}% sooner than the earlier resonant pulse. "
-    "the much smaller final-damage difference against the resonant pulse is not established as a resolved advantage.\n\n"
-    f"amplitude recalibration reaches the common information target within the peak cap in every circuit/coupling test: {circuit_equal}. "
-    f"the larger-sample assignment comparison establishes equivalence within +/-3 percentage points: {equivalence_pass}. "
-    f"all new trajectory-accuracy validation intervals meet that tolerance: {validation_pass}. "
-    "these statements concern the specified ideal detector and fixed classifier.\n\n"
-    + rate_sentence + claim_sentence + "\n\n"
-    f"after seven cycles (21 μs), the closed-pulse receiver misreads the initial bit in {100*final_long.loc['closed', 'assignment error']:.2f}% of records "
-    f"(95% interval {100*final_long.loc['closed', '95% low']:.2f}–{100*final_long.loc['closed', '95% high']:.2f}%). "
-    "the tables show the extra time and stored-bit damage required for that stronger measurement. the long-record result has its own finite sampling error; the short-record convergence checks do not certify every long-record statistic.\n\n"
-    "the contribution is an explainable pulse design and a quantified recovery/error trade-off in this model. "
-    "the evidence does not establish a new physical principle, a hardware measurement fidelity, or full satisfaction of the capstone's protection requirement."
-)
-display(Markdown(findings))
-(artifacts / "audit_findings.md").write_text(findings+"\n")
-print("the earlier summary.json is retained; audit_summary.json records the added experiments and their software versions.")
+if audit_load_saved:
+    audit_summary = json.loads((artifacts / "audit_summary.json").read_text())
+    findings = (artifacts / "audit_findings.md").read_text()
+    display(Markdown(findings))  # these are saved computed findings, not a new numerical run
+    print("saved results displayed; no model or trajectory solves were run.")
+else:
+    from IPython.display import Markdown  # a short result-based interpretation inside the notebook
+
+    final_nominal = pd.read_csv(artifacts / "closed_validation.csv").query("na == 36 and nb == 10").set_index("pulse")
+    final_readiness = pd.read_csv(artifacts / "closed_readiness.csv").query("`leakage threshold` == 0.0001").set_index("pulse")
+    damage_reduction = 1-final_nominal.loc["closed", "wrong + leakage"]/final_nominal.loc["flat", "wrong + leakage"]
+    recovery_reduction = 1-final_readiness.loc["closed", "ready time us"]/final_readiness.loc["flat", "ready time us"]
+    resonant_recovery_reduction = 1-final_readiness.loc["closed", "ready time us"]/final_readiness.loc["resonant", "ready time us"]
+    final_rates = protection_table.set_index("pulse")
+    final_precision = precision_table.set_index("pulse")
+    final_long = long_table.set_index("pulse")
+    equivalence_pass = bool(precision_comparison.iloc[0]["equivalent within 3 points"])
+    validation_pass = bool(precision_check_table["equivalent within 3 points"].all())
+    closed_rate = float(final_rates.loc["closed", "cycle contrast rate per us"])
+    idle_rate = float(final_rates.loc["idle", "cycle contrast rate per us"])
+    rate_resolution = float(final_rates.loc["idle", "numerical uncertainty indicator"])
+    idle_resolved = bool(final_rates.loc["idle", "resolved above numerical indicator"])
+    preservation_supported = bool(closed_rate <= idle_rate+3*rate_resolution)
+    circuit_frame = pd.DataFrame(calibrated_rows)
+    circuit_equal = bool(circuit_frame["feasible"].all() and (abs(circuit_frame["information"]/extension_target-1) <= audit_criteria["information relative"]).all())
+    audit_summary = {"software_versions": versions, "original_sections_retained": True,
+                     "comparison": "ideal-model finite readout and a specified repeated measurement schedule",
+                     "wrong_plus_leakage_reduction_vs_flat": float(damage_reduction),
+                     "recovery_time_reduction_vs_flat": float(recovery_reduction),
+                     "recovery_time_reduction_vs_resonant": float(resonant_recovery_reduction),
+                     "equal_information_circuit_and_coupling_checks_pass": circuit_equal,
+                     "assignment_equivalence_within_3_points": equivalence_pass,
+                     "trajectory_validation_within_3_points": validation_pass,
+                     "closed_cycle_contrast_rate_per_us": closed_rate, "idle_cycle_contrast_rate_per_us": idle_rate,
+                     "idle_rate_resolved": idle_resolved, "idle_protection_preservation_supported": preservation_supported,
+                     "long_readout_cycles": 7, "long_readout_time_us": 21.0,
+                     "long_closed_assignment_error": float(final_long.loc["closed", "assignment error"]),
+                     "long_closed_assignment_95_interval": [float(final_long.loc["closed", "95% low"]), float(final_long.loc["closed", "95% high"])],
+                     "limits": ["ideal detector efficiency", "no thermal bath or microwave-line transfer function",
+                                "circuit corrections are resonant RWA corrections", "no established novelty claim",
+                                "repeated-cycle rate is not the stationary spectral rate of task 2.1"]}
+    (artifacts / "audit_summary.json").write_text(json.dumps(audit_summary, indent=2))
+    rate_sentence = (f"the repeated-cycle contrast decay is {closed_rate:.3g}/μs for the closed pulse and {idle_rate:.3g}/μs for idle. "
+                     + ("the idle rate is resolved by the stated numerical indicator. " if idle_resolved else "the idle-rate precision is limited by the stated numerical indicator. "))
+    if idle_resolved and idle_rate > 0:
+        rate_sentence += f"the readout decay is roughly {closed_rate/idle_rate:.0f} times the idle value. "  # the cutoff indicator limits the precision of this ratio
+    claim_sentence = ("preserving idle bit protection is consistent with this particular numerical test."
+                      if preservation_supported else "this does not preserve idle bit protection: the improvement is relative to another readout, and the measurement still adds substantial bit disturbance.")
+    findings = (
+        f"the calculated pulse reduces wrong-codeword population plus leakage by {100*damage_reduction:.1f}% against the flat baseline at approximately equal mean-signal information. "
+        f"at the declared 1e-4 leakage threshold it recovers {100*recovery_reduction:.1f}% sooner than flat readout and {100*resonant_recovery_reduction:.1f}% sooner than the earlier resonant pulse. "
+        "the much smaller final-damage difference against the resonant pulse is not established as a resolved advantage.\n\n"
+        f"amplitude recalibration reaches the common information target within the peak cap in every circuit/coupling test: {circuit_equal}. "
+        f"the larger-sample assignment comparison establishes equivalence within +/-3 percentage points: {equivalence_pass}. "
+        f"all new trajectory-accuracy validation intervals meet that tolerance: {validation_pass}. "
+        "these statements concern the specified ideal detector and fixed classifier.\n\n"
+        + rate_sentence + claim_sentence + "\n\n"
+        f"after seven cycles (21 μs), the closed-pulse receiver misreads the initial bit in {100*final_long.loc['closed', 'assignment error']:.2f}% of records "
+        f"(95% interval {100*final_long.loc['closed', '95% low']:.2f}–{100*final_long.loc['closed', '95% high']:.2f}%). "
+        "the tables show the extra time and stored-bit damage required for that stronger measurement. the long-record result has its own finite sampling error; the short-record convergence checks do not certify every long-record statistic.\n\n"
+        "the contribution is an explainable pulse design and a quantified recovery/error trade-off in this model. "
+        "the evidence does not establish a new physical principle, a hardware measurement fidelity, or full satisfaction of the capstone's protection requirement."
+    )
+    display(Markdown(findings))
+    (artifacts / "audit_findings.md").write_text(findings+"\n")
+    print("the earlier summary.json is retained; audit_summary.json records the added experiments and their software versions.")
