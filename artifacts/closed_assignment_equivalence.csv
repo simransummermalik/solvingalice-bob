@@ -1,0 +1,3 @@
+comparison,assignment difference,95% low,95% high,within +/-3 percentage points
+closed minus flat,-0.009765625,-0.03375088612192163,0.014219636121921637,False
+closed minus resonant,-0.00634765625,-0.02344274406596416,0.01074743156596416,True
