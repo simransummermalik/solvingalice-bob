@@ -1,0 +1,29 @@
+{
+  "data": "pump_detuning_nonlinear_cycles_32_8.csv",
+  "scope": "settings of the saved repeated-cycle experiment; distinct from the chi/2pi = 0.30 MHz endpoint study",
+  "time_unit": "microsecond",
+  "cutoff": [32, 8],
+  "alpha": 2.1,
+  "chi_over_2pi_MHz": 0.15,
+  "buffer_Kerr_over_2pi_MHz": 3.3,
+  "memory_dephasing_over_2pi_MHz": 0.001,
+  "cycles": 6,
+  "period_us": 3.0,
+  "drive_duration_us": 1.5,
+  "fit_cycle_boundaries": [2, 3, 4, 5, 6],
+  "initial_state": "orthogonal Z+ codeword, buffer vacuum",
+  "reset_buffer_between_cycles": false,
+  "original": {
+    "buffer_fraction": 0.0,
+    "detuning_factor": 0.0,
+    "memory_drive_scale": 1.166
+  },
+  "combined": {
+    "buffer_fraction": 0.45,
+    "detuning_factor": 1.5,
+    "memory_drive_scale": 1.190
+  },
+  "idle_control": "set memory_drive_scale to zero; retain the corresponding buffer amplitude and detuning schedule",
+  "rate_definition": "minus the fitted slope of log logical-bit contrast versus time; extra rate is active minus corresponding idle rate",
+  "provenance": "recovered from the generating pump_nonlinear_cycles.py script and checked against the saved CSV"
+}

@@ -1,0 +1,17 @@
+{
+  "scope": "small-matrix phase identity and independent Lindblad integration; not a physical cutoff study",
+  "cutoff": [
+    4,
+    3
+  ],
+  "time unit": "microsecond",
+  "max relative Hamiltonian error": 1.1452003110340984e-14,
+  "max dissipator error": 1.2200847424558842e-13,
+  "max receiver operator error": 4.063416270128073e-14,
+  "max phase derivative error per us": 6.135181251920585e-10,
+  "max density matrix Frobenius error": 4.4753200908567565e-09,
+  "max tracked buffer signal error": 6.687864411676254e-10,
+  "max fixed LO real signal difference": 0.665463491556334,
+  "idle buffer shift MHz": 1.323,
+  "peak buffer shift MHz": 1.91835
+}

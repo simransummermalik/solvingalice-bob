@@ -3109,25 +3109,131 @@ display(Markdown(breath_full_text))  # one place to see the result together with
 (breath_folder / "pump_breathing_full_findings.md").write_text(breath_full_text + "\n")
 
 # %% [markdown]
-# cross-kerr-aware readout: expand the cat and correct the buffer frequency
+# cross-kerr-aware readout: expand the cat and track the buffer phase
 #
-# the nonlinear stress test left a useful gap. expanding the cat reduced the
-# readout damage, while a buffer detuning corrected the mean frequency shift
-# from `chi n_a n_b`. the joint pulse uses both effects at once:
+# the joint pulse combines a temporary buffer-drive increase with a calibrated
+# detuning. the following is the exact waveform in the numerical model. define
 #
-# - add `0.45 epsilon_d sin²(pi t / 1.5)` to the stabilizing buffer drive;
-# - apply a static buffer correction `-chi alpha² n_b`;
-# - add the same correction with the 0.45 sin² envelope during the readout;
-# - raise the memory pulse only to the value needed to recover the information
-#   target.
+# $$
+# r(t)=
+# \begin{cases}
+# \sin^2(\pi t/T),&0\le t<T,\\
+# 0,&t\ge T,
+# \end{cases}
+# \qquad T=1.5\,\mu s.
+# $$
 #
-# the 0.15 MHz cross-kerr case and the stronger 0.30 MHz stress case are both
-# compared with matched flat pulses and with each control knob by itself. the
-# stronger case is the interesting one: the original closed pulse hits the
-# memory-drive cap before reaching the target information, while the joint
-# pulse reaches it. this uses the known idea of dynamic frequency compensation
-# in nonlinear cat systems, but tests it as a readout and bit-protection
-# co-design problem.
+# with buffer-drive fraction $q$ and compensation factor $f$,
+#
+# $$
+# \epsilon_B(t)=g_2\alpha^2[1+q\,r(t)],
+# \qquad
+# \delta_b(t)=-f\chi\alpha^2[1+q\,r(t)].
+# $$
+#
+# the selected strong-cross-kerr pulse has $q=0.45$, $f=1$, and memory-drive
+# scale $1.185$. its Hamiltonian correction is $\delta_b(t)n_b$. the static
+# part $-f\chi\alpha^2n_b$ stays on through listening and recovery; only the extra
+# sine-squared part ends at $T$. this is a prescribed waveform. it does not
+# measure the photon number or feed a measured value back into the Hamiltonian.
+#
+# the motivation is the mean occupation estimate
+# $n_{\mathrm{est}}(t)=\alpha^2[1+q r(t)]$. with $f=1$, the residual term is
+# $\chi[n_a-n_{\mathrm{est}}(t)]n_b$. occupation fluctuations and delayed memory
+# motion remain in the full simulation.
+#
+# how to make this detuning with the existing tones
+#
+# let $C(t)=-\delta_b(t)$ and $A(t)=\int_0^t C(s)\,ds$. for $t\ge0$, the
+# phase accumulator can be written exactly as
+#
+# $$
+# A(t)=f\chi\alpha^2[t+qR(t)],\qquad
+# R(t)=
+# \begin{cases}
+# t/2-\dfrac{T}{4\pi}\sin(2\pi t/T),&0\le t<T,\\
+# T/2,&t\ge T.
+# \end{cases}
+# $$
+#
+# start from carriers $\omega_a,\omega_b,\omega_{p0}=2\omega_a-\omega_b$.
+# after choosing constant phase offsets to match our Hamiltonian signs, program
+#
+# | tone or reference | phase | instantaneous angular frequency |
+# | --- | --- | --- |
+# | buffer drive | $\theta_d=\omega_bt+A(t)$ | $\omega_d=\omega_b+C(t)$ |
+# | exchange pump | $\theta_p=\omega_{p0}t-A(t)$ | $\omega_p=\omega_{p0}-C(t)$ |
+# | memory drive | $\theta_Z=\omega_at$ | $\omega_Z=\omega_a$ |
+# | homodyne local oscillator | $\theta_{\rm LO}=\theta_d$ | $\omega_{\rm LO}=\omega_d$ |
+#
+# thus $\theta_p+\theta_d=2\theta_Z$, including the time-dependent phase.
+# the buffer's physical resonance can stay fixed. the detuning comes from
+# chirping the buffer drive and pump in opposite directions. the phase accumulator
+# continues through ringdown and between repeated cycles.
+#
+# here is the sign check. in the original frame rotating at $\omega_a,\omega_b$,
+# the rotating-wave Hamiltonian with those programmed phases is
+#
+# $$
+# \begin{aligned}
+# H_{\rm chirp}(t)={}&H_{\rm nl}+H_Z(t)\\
+# &+g_2\left[e^{-iA}a^2b^\dagger+e^{iA}a^{\dagger2}b\right]\\
+# &-\epsilon_B(t)\left[e^{iA}b+e^{-iA}b^\dagger\right],
+# \end{aligned}
+# $$
+#
+# where $H_{\rm nl}$ contains the buffer Kerr and cross-kerr terms. change frame
+# with $U(t)=e^{-iA(t)n_b}$ and $\rho_{\rm eff}=U^\dagger\rho_{\rm chirp}U$.
+# since $U^\dagger bU=e^{-iA}b$,
+#
+# $$
+# \begin{aligned}
+# H_{\rm eff}
+# &=U^\dagger H_{\rm chirp}U-iU^\dagger\dot U\\
+# &=H_{\rm nl}+H_Z(t)+g_2(a^2b^\dagger+a^{\dagger2}b)
+# -\epsilon_B(t)(b+b^\dagger)-C(t)n_b.
+# \end{aligned}
+# $$
+#
+# the last term is exactly the correction in the numerical model, because
+# $-C=\delta_b$. a phase on a jump operator leaves its dissipator unchanged, so
+# the same frame change also preserves the memory-loss, buffer-loss, and
+# memory-dephasing terms under our Markov bath assumptions.
+#
+# the receiver needs the same phase reference. if
+# $\beta_{\rm chirp}=\operatorname{Tr}(b\rho_{\rm chirp})$, then
+#
+# $$
+# \beta_{\rm eff}=e^{iA}\beta_{\rm chirp},\qquad
+# dY=2\sqrt{\eta\kappa_b}\,
+# \operatorname{Re}[e^{iA}\beta_{\rm chirp}]\,dt+dW.
+# $$
+#
+# this is the quadrature used by our information metric and matched-filter
+# template. keeping a fixed local oscillator instead would measure another
+# quadrature. digitizing both quadratures and rotating them later is a different
+# receiver with its own noise budget; the equality above assumes the programmed
+# homodyne phase.
+#
+# at $\chi/2\pi=0.30\,\mathrm{MHz}$, $\alpha=2.1$, $q=0.45$, $f=1$, the
+# buffer-drive and local-oscillator shifts are $+1.323\,\mathrm{MHz}$ at idle and
+# $+1.91835\,\mathrm{MHz}$ at the ramp peak. the pump shifts by the opposite
+# amount. the extra excursion is $0.59535\,\mathrm{MHz}$, while the buffer-drive
+# amplitude increases by up to 45%.
+#
+# the frequency relation is consistent with Alice & Bob's
+# [calibration description, section D.2](https://patents.google.com/patent/EP4492296A1/en),
+# which relates the memory drive to half the sum of the pump and buffer-drive
+# frequencies. the time-dependent construction and frame calculation above are
+# our derivation for this pulse.
+#
+# the equivalence is exact within the stated rotating-wave model and dissipators.
+# implementing it requires synchronized phase control on the pump, buffer drive,
+# and receiver, calibrated amplitudes, and a measurement chain that follows the
+# chirp. we have not measured those hardware responses or derived their changing
+# Stark shifts, coupling, filtering, and noise from a specific device. a numerical
+# frame check below tests the mathematical mapping; it does not establish hardware
+# performance.
 
 # %%
 import json  # keep the exact control settings beside the result tables
@@ -3155,10 +3261,10 @@ def detuning_nonlinear_run(na, nb, buffer_fraction, frequency_factor, drive_scal
     memory_envelope = extension_waveform(spec)  # only its calibrated height changes
 
     def pulse_ramp(t):
-        inside = (t >= 0) & (t < spec["duration"])  # the correction ends before listening
+        inside = (t >= 0) & (t < spec["duration"])  # only the extra ramp ends; the static detuning stays on
         return jnp.where(inside, jnp.sin(jnp.pi*t/spec["duration"])**2, 0.0)
 
-    shifted = h - frequency_factor*detuning_chi*alpha**2*number_b  # cancel the mean buffer shift
+    shifted = h - frequency_factor*detuning_chi*alpha**2*number_b  # static part of the prescribed compensation
     driven = shifted + dq.modulated(lambda t: drive_scale*memory_envelope(t), a+a.dag())
     driven = driven + dq.modulated(lambda t: -g2*alpha**2*buffer_fraction*pulse_ramp(t), b+b.dag())
     driven = driven + dq.modulated(lambda t: -frequency_factor*detuning_chi*alpha**2*buffer_fraction*pulse_ramp(t), number_b)
@@ -3204,6 +3310,7 @@ detuning_only = pd.read_csv(detuning_folder / "pump_detuning_chi0p30_detuning_on
 detuning_ablation = pd.read_csv(detuning_folder / "pump_detuning_chi0p30_ablation_32_8.csv")
 detuning_breathing_only = detuning_ablation.query("condition == 'breathing only at cap'").iloc[0]
 detuning_cycles = pd.read_csv(detuning_folder / "pump_detuning_nonlinear_cycles_32_8.csv")
+detuning_cycle_settings = json.loads((detuning_folder / "pump_detuning_cycle_settings.json").read_text())  # separate chi=0.15 MHz experiment
 detuning_quadrature = pd.read_csv(detuning_folder / "pump_quadrature_training.csv")  # the failed sideband attempt
 
 detuning_strong_table = pd.DataFrame([
@@ -3236,12 +3343,12 @@ for _, row in detuning_strong_table.iterrows():
     axes[0].annotate(row["condition"], (row["information"], row["damage x 1e3"]), xytext=(4, 4), textcoords="offset points", fontsize=8)
     axes[0].scatter([row["information"]], [row["damage x 1e3"]], color=color, s=45)
 axes[0].axvline(0.79, color="gray", ls=":", lw=1)  # common target information
-axes[0].set(xlabel="information", ylabel="endpoint damage × 10³", title="strong cross-kerr trade-off")
+axes[0].set(xlabel="information", ylabel="endpoint damage × 10³", title="endpoint: χ/2π = 0.30 MHz")
 axes[1].bar(["original", "combined"], [1e6*detuning_original_excess_rate, 1e6*detuning_combined_excess_rate], color=["#c46b39", "#348a71"])
-axes[1].set(ylabel="extra rate × 10⁶ / μs", title="repeated nonlinear readout")
+axes[1].set(ylabel="extra rate × 10⁶ / μs", title="cycles: χ/2π = 0.15 MHz")
 axes[2].plot(detuning_cycles.query("condition == 'original'")["time"], detuning_cycles.query("condition == 'original'")["contrast"], "o-", label="original")
 axes[2].plot(detuning_cycles.query("condition == 'combined'")["time"], detuning_cycles.query("condition == 'combined'")["contrast"], "o-", label="combined")
-axes[2].set(xlabel="time (μs)", ylabel="logical-bit contrast", title="same nonlinear model")
+axes[2].set(xlabel="time (μs)", ylabel="logical-bit contrast", title="cycles: χ/2π = 0.15 MHz")
 axes[2].legend()
 fig.tight_layout()
 fig.savefig(detuning_folder / "24_cross_kerr_aware_readout.png", dpi=170, bbox_inches="tight")
@@ -3257,8 +3364,10 @@ plt.close(fig)
 # breathing alone and detuning alone each help; the combined pulse has the
 # smallest endpoint damage in this comparison.
 #
-# the repeated-cycle test is stronger than a single endpoint. subtracting each
-# protocol's own idle rate gives `3.06e-4/us` extra decay for the original and
+# the separate repeated-cycle test uses `chi/2pi = 0.15 MHz`, six 3 μs cycles,
+# no buffer reset, detuning factor 1.5, and memory-drive scale 1.190 (original:
+# 1.166). these are different settings from the 0.30 MHz endpoint experiment.
+# subtracting each protocol's own idle rate gives `3.06e-4/us` extra decay for the original and
 # `3.36e-5/us` for the combined pulse, an 89% reduction. the total active rate
 # is still not zero, so this is a lower-damage readout rather than perfect
 # nondemolition measurement.
@@ -3275,12 +3384,130 @@ detuning_flat_best = detuning_strong_table.query("condition == 'flat 1.5 μs'").
 detuning_rate_reduction = 100*(1-detuning_combined_excess_rate/detuning_original_excess_rate)
 detuning_damage_reduction = 100*(1-detuning_best["damage"]/detuning_flat_best["damage"])
 detuning_text = (
-    f"the cross-kerr-aware joint pulse reaches information {detuning_best['information']:.3f} at 32×8 and "
+    f"at chi/2pi = 0.30 MHz, the cross-kerr-aware joint pulse reaches information {detuning_best['information']:.3f} at 32×8 and "
     f"{detuning_strong_high.loc[1, 'information']:.3f} at 36×10. its endpoint damage is "
     f"{detuning_damage_reduction:.1f}% below the matched 1.5 μs flat baseline. "
-    f"over repeated nonlinear cycles, subtracting each idle control gives an "
+    f"in a separate six-cycle test at chi/2pi = 0.15 MHz, subtracting each idle control gives an "
     f"extra-rate reduction of {detuning_rate_reduction:.1f}%. "
     "the receiver and hardware limits remain separate tests; this is a model-backed control proposal, not a claim of experimental proof."
 )
 display(Markdown(detuning_text))  # keep the headline and its boundary together
 (detuning_folder / "pump_detuning_findings.md").write_text(detuning_text + "\n")
+
+# %% [markdown]
+# a small check of the phase recipe
+#
+# this cell runs independently after a kernel restart. it checks the Hamiltonian,
+# Lindblad jumps, and measured quadrature, then evolves the chirped and effective
+# descriptions separately and compares their states after transforming frames.
+# the 4 x 3 matrices and mixed initial state are only an algebra/solver test.
+# the cat-performance numbers above still come from the larger cutoff studies.
+# the saved audit is in artifacts/pump_detuning_phase_audit.json.
+
+# %%
+import json  # save the frame check alongside the other audits
+from pathlib import Path  # make this cell work after a fresh kernel restart
+import numpy as np  # finite matrices are enough to test a frame transformation
+from scipy.integrate import solve_ivp  # evolve both descriptions independently
+
+frame_na, frame_nb = 4, 3  # small dimensions test identities, not cat convergence
+frame_g2, frame_kb, frame_ka = 2*np.pi*np.array([0.763, 2.6, 0.0093])  # rad/us
+frame_chi, frame_kerr, frame_phi = 2*np.pi*np.array([0.30, 3.3, 0.001])  # stress values
+frame_alpha, frame_q, frame_f, frame_T = 2.1, 0.45, 1.0, 1.5  # actual chirp settings
+frame_a = np.kron(np.diag(np.sqrt(np.arange(1, frame_na)), 1), np.eye(frame_nb))  # memory
+frame_b = np.kron(np.eye(frame_na), np.diag(np.sqrt(np.arange(1, frame_nb)), 1))  # buffer
+frame_n_a, frame_n_b = frame_a.conj().T@frame_a, frame_b.conj().T@frame_b  # number operators
+frame_exchange = frame_a@frame_a@frame_b.conj().T  # two memory photons to one buffer photon
+frame_nl = frame_chi*frame_n_a@frame_n_b + frame_kerr/2*frame_b.conj().T@frame_b.conj().T@frame_b@frame_b  # Kerr terms
+frame_jumps = [np.sqrt(frame_kb)*frame_b, np.sqrt(frame_ka)*frame_a, np.sqrt(frame_phi)*frame_n_a]  # same baths
+
+
+def frame_controls(t):
+    ramp = np.sin(np.pi*t/frame_T)**2 if 0 <= t < frame_T else 0.0  # temporary part
+    elapsed = np.clip(t, 0, frame_T)  # the integral keeps its accumulated phase after the ramp
+    ramp_area = elapsed/2-frame_T*np.sin(2*np.pi*elapsed/frame_T)/(4*np.pi)  # exact integral
+    correction = frame_f*frame_chi*frame_alpha**2*(1+frame_q*ramp)  # C(t) = -delta_b(t)
+    phase = frame_f*frame_chi*frame_alpha**2*(t+frame_q*ramp_area)  # A(t), including the static shift
+    buffer_drive = frame_g2*frame_alpha**2*(1+frame_q*ramp)  # same amplitude envelope
+    return ramp, correction, phase, buffer_drive
+
+
+def frame_hamiltonian(t, chirped):
+    ramp, correction, phase, buffer_drive = frame_controls(t)  # both descriptions use these settings
+    h = frame_nl + 0.25*frame_g2*ramp*(frame_a+frame_a.conj().T)  # any real memory pulse obeys the identity
+    if chirped:
+        h = h + frame_g2*(np.exp(-1j*phase)*frame_exchange + np.exp(1j*phase)*frame_exchange.conj().T)  # pump phase
+        return h-buffer_drive*(np.exp(1j*phase)*frame_b+np.exp(-1j*phase)*frame_b.conj().T)  # buffer phase
+    h = h + frame_g2*(frame_exchange+frame_exchange.conj().T)  # real exchange in the chirped frame
+    return h-buffer_drive*(frame_b+frame_b.conj().T)-correction*frame_n_b  # simulated detuning has a minus sign
+
+
+def frame_dissipator(jump, rho):
+    product = jump.conj().T@jump  # anticommutator part of the Lindblad term
+    return jump@rho@jump.conj().T-0.5*(product@rho+rho@product)  # D_L[rho]
+
+
+frame_rng = np.random.default_rng(20261025)  # fixed state makes the audit reproducible
+frame_ket = frame_rng.normal(size=frame_na*frame_nb)+1j*frame_rng.normal(size=frame_na*frame_nb)  # test coherences too
+frame_ket = frame_ket/np.linalg.norm(frame_ket)  # normalize before mixing
+frame_initial = 0.8*np.outer(frame_ket, frame_ket.conj())+0.2*np.eye(frame_na*frame_nb)/(frame_na*frame_nb)  # positive state
+frame_times = np.unique(np.r_[np.linspace(0, 3, 61), 0.17, 1.49, 1.51, 2.2])  # sample ramp and ringdown
+frame_h_errors, frame_d_errors, frame_lo_errors, frame_phase_errors = [], [], [], []  # keep separate diagnostics
+for t in frame_times:
+    _, correction, phase, _ = frame_controls(t)  # all phases are relative to their nominal carriers
+    u = np.diag(np.exp(-1j*phase*np.diag(frame_n_b)))  # U = exp(-i A n_b)
+    transformed_h = u.conj().T@frame_hamiltonian(t, True)@u-correction*frame_n_b  # include -i Udag dot U
+    frame_h_errors.append(np.linalg.norm(transformed_h-frame_hamiltonian(t, False))/max(1, np.linalg.norm(transformed_h)))  # relative
+    for jump in frame_jumps:
+        rotated_jump = u.conj().T@jump@u  # the buffer jump acquires only a scalar phase
+        frame_d_errors.append(np.linalg.norm(frame_dissipator(rotated_jump, frame_initial)-frame_dissipator(jump, frame_initial)))  # bath invariance
+    frame_lo_errors.append(np.linalg.norm(u.conj().T@(np.exp(1j*phase)*frame_b)@u-frame_b))  # same measured quadrature
+    step = 1e-5  # finite difference independently checks the analytic phase integral
+    phase_derivative = (frame_controls(t+step)[2]-frame_controls(t-step)[2])/(2*step)  # dA/dt
+    frame_phase_errors.append(abs(phase_derivative-correction))  # should equal C(t), including after T
+
+
+def frame_rhs(t, vector, chirped):
+    rho = vector.reshape(frame_initial.shape)  # density matrix in the chosen frame
+    h = frame_hamiltonian(t, chirped)  # distinct Hamiltonians, integrated separately
+    rate = -1j*(h@rho-rho@h)  # unitary part
+    for jump in frame_jumps:
+        rate = rate+frame_dissipator(jump, rho)  # same unconditional baths
+    return rate.ravel()  # solve_ivp expects a vector
+
+
+frame_solutions = []  # two independent adaptive integrations
+for chirped in [False, True]:
+    solution = solve_ivp(lambda t, y: frame_rhs(t, y, chirped), (0, 3), frame_initial.ravel(),
+                         t_eval=frame_times, method="DOP853", rtol=2e-10, atol=2e-12)  # tight enough for a sign test
+    assert solution.success, solution.message  # never hide an integration failure
+    frame_solutions.append(solution.y.T.reshape((-1, *frame_initial.shape)))  # back to density matrices
+
+frame_state_error, frame_signal_error, frame_fixed_lo_difference = 0.0, 0.0, 0.0  # maximum absolute discrepancies
+for t, effective_rho, chirped_rho in zip(frame_times, *frame_solutions):
+    phase = frame_controls(t)[2]  # receiver follows the same phase accumulator
+    u = np.diag(np.exp(-1j*phase*np.diag(frame_n_b)))  # no memory rotation is needed
+    frame_state_error = max(frame_state_error, float(np.linalg.norm(effective_rho-u.conj().T@chirped_rho@u)))  # full state
+    effective_b, chirped_b = np.trace(frame_b@effective_rho), np.trace(frame_b@chirped_rho)  # complex signals
+    frame_signal_error = max(frame_signal_error, float(abs(effective_b-np.exp(1j*phase)*chirped_b)))  # tracked receiver
+    frame_fixed_lo_difference = max(frame_fixed_lo_difference, float(abs(effective_b.real-chirped_b.real)))  # untracked receiver
+
+frame_summary = {
+    "scope": "small-matrix phase identity and independent Lindblad integration; not a physical cutoff study",
+    "cutoff": [frame_na, frame_nb], "time unit": "microsecond",
+    "max relative Hamiltonian error": float(max(frame_h_errors)),
+    "max dissipator error": float(max(frame_d_errors)),
+    "max receiver operator error": float(max(frame_lo_errors)),
+    "max phase derivative error per us": float(max(frame_phase_errors)),
+    "max density matrix Frobenius error": frame_state_error,
+    "max tracked buffer signal error": frame_signal_error,
+    "max fixed LO real signal difference": frame_fixed_lo_difference,
+    "idle buffer shift MHz": float(frame_f*frame_chi*frame_alpha**2/(2*np.pi)),
+    "peak buffer shift MHz": float(frame_f*frame_chi*frame_alpha**2*(1+frame_q)/(2*np.pi)),
+}  # the scalar diagnostics are enough to reproduce the claim
+assert max(frame_h_errors) < 1e-12 and max(frame_d_errors) < 1e-12  # Hamiltonian and baths
+assert max(frame_lo_errors) < 1e-12 and max(frame_phase_errors) < 1e-7  # receiver and phase derivative
+assert frame_state_error < 2e-8 and frame_signal_error < 2e-8  # both independently evolved descriptions agree
+Path("artifacts").mkdir(exist_ok=True)  # allow this cell to run independently
+Path("artifacts/pump_detuning_phase_audit.json").write_text(json.dumps(frame_summary, indent=2)+"\n")  # generated numerical audit
+print(json.dumps(frame_summary, indent=2))  # keep the evidence visible in the notebook
