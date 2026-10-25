@@ -1,62 +1,112 @@
-# cat qubits, from losing photons to reading a bit
+# Cat Qubits: From Losing Photons to Reading a Bit
 
-our Alice & Bob DuQuantum 2026 submission covers the introductory track and
-extends into the standard track. the question that kept us going: can the
-buffer's natural ringing help us read the cat?
+Our Alice & Bob DuQuantum 2026 project starts with photon loss and ends with a
+question about measurement: **Can the buffer's natural ringing help us read a cat qubit?**
 
-our final proposal briefly expands the cat and tracks the buffer's cross-Kerr
-shift with coordinated pump, drive, and receiver phases.
+We built the introductory-track foundations, characterized logical errors, and
+developed a standard-track extension that coordinates temporary cat expansion,
+microwave phases, and the receiver. In a nonlinear stress model, the combined
+control reduces endpoint damage by about **20%** relative to a closely matched
+flat pulse. A separate noisy-record audit measures its assignment error and
+tests whether protection survives measurement.
 
-open [the notebook](cat_qubits.ipynb) for code and outputs.
-[the detailed report](REPORT.md) has every task, derivation, figure, and decision.
+The result is a tested control proposal, an executed [Jupyter notebook](cat_qubits.ipynb),
+and a numerical record of what worked, what failed, and why.
 
-## the main result
+## The Creative Step: Let the Cat Breathe, Then Follow Its Frequency
 
-| experiment | result | evidence |
+Our memory oscillator stores the logical states near opposite coherent states.
+A lossy buffer both stabilizes the memory and carries the readout signal.
+Increasing the cat's separation can help distinguish the states, but it also
+changes the buffer's occupation-dependent frequency shift.
+
+Our strategy coordinates three operations:
+
+1. Briefly expand the cat through the buffer stabilization drive.
+2. Compensate for the estimated cross-Kerr shift with synchronized drive and pump phases.
+3. Apply a matched filter to the buffer waveform, with the homodyne reference following the phase.
+
+For the final pulse,
+
+$$
+\epsilon_B(t)=g_2\alpha^2[1+0.45r(t)],
+\qquad
+\delta_b(t)=-\chi\alpha^2[1+0.45r(t)].
+$$
+
+Here, $r(t)=\sin^2(\pi t/T)$ during the $T=1.5\,\mu s$ pulse and is zero
+outside it. The static correction remains during recovery. Opposing pump and
+buffer-drive chirps implement the effective detuning within our rotating-wave
+model; the receiver follows the same frame.
+
+The combined pulse has lower endpoint damage than either expansion alone or
+frequency correction alone. The [phase derivation](REPORT.md#readout-phase-recipe)
+and [matrix audit](artifacts/pump_detuning_phase_audit.json) check the prescription
+and signs. Hardware bandwidth and calibration remain to be tested.
+The buffer can ring; the receiver needs to know the tune.
+
+## Results, With the Evidence
+
+The final stress model uses $\alpha=2.1$, cross-Kerr $\chi/2\pi=0.30$ MHz,
+buffer Kerr $K_b/2\pi=3.3$ MHz, and memory dephasing of $1$ kHz.
+
+| Question | Result | Evidence |
 | --- | --- | --- |
-| endpoint test, $\chi/2\pi=0.30$ MHz | information $0.79066$; damage $0.002458$, about 20.0% below the closely matched flat baseline | [comparison](artifacts/pump_detuning_strong_comparison.csv) |
-| final-pulse readout, same nonlinear model | 14 errors / 1024 records after $21\,\mu s$: **1.37% error**, 95% Wilson interval 0.82–2.28% | [records](artifacts/final_validation_receiver.csv), [audit](artifacts/final_validation_findings.md) |
-| accuracy versus matched flat readout | flat gives 9 / 1024 errors; the joint pulse has not demonstrated better accuracy | [comparison](artifacts/final_validation_accuracy_comparison.csv) |
-| preservation of idle protection | **fails** our 10% tolerance: total active contrast decay is about 1.67 times matched idle | [rates](artifacts/final_validation_protection.csv), [test](artifacts/final_validation_idle_test.csv) |
+| Does coordinating the controls reduce damage? | $0.003073$ to $0.002458$: **20.0% lower** than flat readout | [Comparison and ablations](artifacts/pump_detuning_strong_comparison.csv) |
+| Is comparable signal information retained? | Joint $0.79066$ versus flat $0.79595$, at the same $3\,\mu s$ endpoint | [Comparison](artifacts/pump_detuning_strong_comparison.csv) |
+| Can the final receiver assign the initial bit? | **14 errors / 1,024 records** after $21\,\mu s$: 1.37% error, 95% Wilson interval 0.82–2.28% | [Receiver results](artifacts/final_validation_receiver.csv) |
+| Is accuracy better than flat readout? | Flat gives 9 / 1,024 errors; an accuracy improvement is not demonstrated | [Paired comparison](artifacts/final_validation_accuracy_comparison.csv) |
+| Is idle protection preserved? | **No:** total contrast decay is 1.67 times matched idle, exceeding our 1.10 audit limit | [Preservation test](artifacts/final_validation_idle_test.csv) |
 
-endpoint damage counts wrong-codeword population plus leakage after $3\,\mu s$,
-taking the worse input. low assignment error takes seven cycles without resets;
-at $3\,\mu s$ the joint receiver still makes 209 / 1024 errors (20.41%). less
-damage alone does not establish better readout or preserved idle protection.
+![Endpoint damage for flat pulses, individual controls, and coordinated control](artifacts/26_readme_control_comparison.png)
 
-![final-pulse assignment errors and the failed idle-protection test](artifacts/25_final_claim_audit.png)
+Damage counts wrong-codeword population plus leakage, taking the worse input.
+The comparisons share a memory-drive cap and observation time; the joint pulse
+spends extra buffer amplitude and phase control. Information is closely matched.
 
-## both tracks, checked
+The low assignment error takes seven cycles without resets and assumes ideal
+detection. At $3\,\mu s$, the joint receiver still makes 209 / 1,024 errors
+(20.41%). Its threshold and template are fixed from deterministic signals;
+classification uses only the buffer record.
 
-| task | what we did and found | evidence |
+## From the Introductory Tasks to the Full Model
+
+We used Python, Dynamiqs, JAX, and QuTiP to connect analytic checks, density-matrix
+evolution, Wigner functions, and stochastic measurement records. The foundation is
+
+$$
+H_{2\mathrm{ph}}=g_2(a^2b^\dagger+a^{\dagger2}b)-\epsilon_B(b+b^\dagger),
+\qquad
+\dot\rho=-i[H,\rho]+\sum_j\mathcal D[L_j]\rho.
+$$
+
+Here, $a$ is the memory mode and $b$ the buffer. The loss operators are
+$\sqrt{\kappa_a}a$ and $\sqrt{\kappa_b}b$; the stress model adds memory dephasing
+and nonlinear Hamiltonian terms. Time is in microseconds; angular rates include $2\pi$.
+
+| Task | What We Established | Evidence |
 | --- | --- | --- |
-| 1.0(a) | single-photon loss agrees with the analytic curve to $1.99\times10^{-11}$ photons | [figure 1](artifacts/01_single_photon_loss.png) |
-| 1.0(b) | pair loss leaves $0.499832269$ photons, matching the initial odd-parity probability | [figure 3](artifacts/03_pair_loss.png) |
-| 1.0(c) | effective stabilization from vacuum, with $\kappa_2/4$, $\kappa_2$, and $4\kappa_2$, plus Wigner snapshots | [sweep](artifacts/04_effective_stabilization.png), [Wigner plots](artifacts/05_effective_cat.png) |
-| 1.1–1.2 | full two-mode inflation, both truncation sweeps, transient peaks, and tails; final memory population $4.40196$ versus target $4.41$ | [transients](artifacts/06_full_inflation_and_tails.png), [cutoffs](artifacts/cutoff_convergence.csv) |
-| 1.3(a) | parity, fidelity, purity, and interference distinguish the even cat from a mixture; best even-cat fidelity $0.8443$ | [figure 8](artifacts/08_which_cat.png) |
-| 1.3(b–c) | a coherent seed selects the positive codeword with fidelity $0.99878$; we discuss displacement calibration and control-port costs | [seed sweep](artifacts/logical_state_preparation.csv), [discussion](REPORT.md#logical-state-preparation) |
-| 2.1–2.2 | bit-decay exponent $2.9545$ over the tested small-cat range; phase-decay slope $0.116684$ versus predicted $0.116867$ | [bit rates](artifacts/bit_flip_rates.csv), [phase rates](artifacts/phase_flip_rates.csv) |
-| 2.3 | opposite buffer signals; weak-drive contrast $-0.047576$, with 2% settling by $0.815\,\mu s$ | [figure 12](artifacts/12_buffer_readout.png) |
-| 2.4(a) | derive memory-drive routes, resonant circuit corrections, and the final chirp prescription | [derivations](REPORT.md#circuit-drive) |
-| 2.4(b–d) | sweep the tradeoff, compare controls, and test the final proposal; lower damage and accurate long-record readout, but idle protection fails | [controls](artifacts/method_control_comparison.csv), [final audit](artifacts/final_validation_summary.json) |
+| 1.0(a): Single-photon loss | Analytic agreement within $1.99\times10^{-11}$ photons | [Loss curve](artifacts/01_single_photon_loss.png) |
+| 1.0(b): Pair loss | Final population $0.499832269$, matching initial odd parity | [Parity check](artifacts/03_pair_loss.png) |
+| 1.0(c): Stabilization | Sweep at $\kappa_2/4$, $\kappa_2$, and $4\kappa_2$, with Wigner snapshots | [Sweep](artifacts/04_effective_stabilization.png), [Wigner plots](artifacts/05_effective_cat.png) |
+| 1.1–1.2: Full inflation and convergence | Independent cutoffs, transient peaks, and tails; population $4.40196$ versus target $\alpha^2=4.41$ | [Transients](artifacts/06_full_inflation_and_tails.png), [Cutoffs](artifacts/cutoff_convergence.csv) |
+| 1.3(a): Identify the state | Parity, purity, fidelity, and interference identify an even cat; best fidelity $0.8443$ | [Diagnostics](artifacts/08_which_cat.png) |
+| 1.3(b–c): Logical preparation | Seeded positive-codeword fidelity $0.99878$, with calibration and control costs discussed | [Sweep](artifacts/logical_state_preparation.csv), [Explanation](REPORT.md#logical-state-preparation) |
+| 2.1–2.2: Errors | Bit-decay exponent $2.9545$ over the tested small-cat range; phase-decay slope $0.116684$ versus predicted $0.116867$ | [Bit rates](artifacts/bit_flip_rates.csv), [Phase rates](artifacts/phase_flip_rates.csv) |
+| 2.3: Buffer readout | Opposite signals, weak-drive contrast $-0.047576$, and 2% settling by $0.815\,\mu s$ | [Readout](artifacts/12_buffer_readout.png) |
+| 2.4(a): Controls | Circuit-drive derivation and synchronized phase prescription | [Derivations](REPORT.md#circuit-drive) |
+| 2.4(b–d): Improved readout | Tradeoffs, receiver comparisons, ablations, and final audits; capstone protection remains unmet | [Controls](artifacts/method_control_comparison.csv), [Audit](artifacts/final_validation_summary.json) |
 
-## why we chose this direction
+## How the Design Evolved
 
-flat pulses gave us a baseline. closed pulses used the buffer transient;
-a matched filter could listen to its changing-sign waveform.
+Flat pulses established the baseline. Resonant and closed pulses made the buffer
+transient useful, while matched filtering avoided cancelling its changing-sign
+signal through plain averaging. Robust pulses, recovery lobes, and derivative
+corrections gave us alternatives to test.
 
-temporary cat expansion helped in the ideal model, then lost much of its
-advantage under nonlinear stress. that led us to compensate the buffer's
-occupation-dependent frequency shift too. the joint pulse beats both
-single-control ablations in the strong-cross-Kerr endpoint comparison.
-
-the buffer drive rises by a smooth 45% ramp over $1.5\,\mu s$. opposite pump
-and buffer-drive chirps track the estimated frequency shift; the homodyne
-reference follows too. [the derivation](REPORT.md#readout-phase-recipe)
-and [phase audit](artifacts/pump_detuning_phase_audit.json) check this prescription.
-
-our decision trail, in miniature:
+Temporary expansion helped more in the ideal model than under nonlinear stress.
+That gap led to frequency tracking and tests of each control separately.
+Our contribution is the coordinated strategy and its validation.
 
 ```mermaid
 erDiagram
@@ -66,49 +116,49 @@ erDiagram
     DECISION ||--o{ ARTIFACT : records
 ```
 
-the [full decision schema](REPORT.md#decision-schema)
-and [failed-method log](fails.md) include robust pulses, recovery lobes,
-derivative corrections, and receiver alternatives.
+The [decision schema](REPORT.md#decision-schema) and [failed-method log](fails.md)
+preserve the reasoning behind those choices.
 
-## what we checked, and what remains open
+## Checks, Lessons, and the Remaining Gap
 
-we varied both cutoffs and checked transient tails. final deterministic rates
-are checked at $32\times8$ and $36\times10$, with tighter tolerances and varied
-fit windows. the phase check agrees within $4.48\times10^{-9}$ in matrix norm.
+We checked deterministic results at $32\times8$ and $36\times10$, tightened
+tolerances, and varied fit windows. The independent chirped-frame check agrees
+within $4.48\times10^{-9}$ in density-matrix norm. The final audit reproduces
+the earlier first-cycle information and damage.
 
-the comparisons share a memory-drive cap and observation time, but the joint
-pulse spends extra buffer-drive amplitude and phase control. the flat endpoint
-baselines have about 0.7–0.8% more information than the joint pulse.
+An ensemble check caught artificial heating in an initial stochastic scheme,
+despite normalized states. We rejected those scores and corrected the numerical
+map. The accepted ensembles pass the photon-number check against the master
+equation. A normalized cat can still be a numerically suspicious cat.
 
-the final receiver uses only buffer homodyne records, with a template and
-threshold fixed from deterministic signals before sampling. detector efficiency
-is ideal. the audit includes smaller stochastic steps, larger cutoffs, and a
-trajectory-ensemble check against the master equation. numerical equivalence
-is not fully resolved by the small validation samples; the [audit](artifacts/final_validation_findings.md)
-reports this separately from the main sample's error interval.
+The larger-cutoff joint receiver sample supports our equivalence margin; the
+smaller-time-step sample leaves it statistically unresolved. Idle preservation
+fails after numerical checks and a diagnostic separating leakage from logical
+contrast decay. These finite-cycle rates differ from Task 2.1's stationary rates.
 
-an earlier, separate $\chi/2\pi=0.15$ MHz test reduced *extra* readout decay by
-89.0%; [its settings](artifacts/pump_detuning_cycle_settings.json) differ from
-the final audit. that reduction never meant idle protection was preserved.
-hardware fidelity and a pulse that passes the preservation test remain future
-work. the current proposal does not meet the full standard capstone target.
+Our strongest result is a lower-damage strategy with an explicit phase
+prescription and low observed long-record error. The next search should optimize
+total active decay relative to idle alongside assignment error. The full
+standard capstone target remains unmet.
 
-## run it
+## Reproduce the Results
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-select that environment and open [cat_qubits.ipynb](cat_qubits.ipynb).
-run the foundational cells in order to recompute the introductory tasks, rates,
-and original readout comparisons. time is in microseconds; rates include $2\pi$.
+Open [cat_qubits.ipynb](cat_qubits.ipynb) in that environment. All **105 cells**
+executed in a fresh pinned environment with the supplied artifacts; default
+execution reloads some expensive saved comparisons. The
+[run record](artifacts/clean_environment_validation.json) captures versions and
+source hashes; the [data check](artifacts/final_validation_data_checks.json)
+independently verifies saved counts and confidence intervals.
 
-after restarting, the last four cells are self-contained: `final_validation_recompute = False`
-loads the final audit; `True` recomputes its density-matrix and trajectory tests,
-reusing checkpoints with matching settings. [the clean-run record](artifacts/clean_environment_validation.json)
-documents execution in a fresh pinned environment with the supplied artifacts.
+The last four cells work after a kernel restart.
+`final_validation_recompute = False` loads the audit; `True` recomputes it using
+compatible checkpoints. [REPORT.md](REPORT.md) contains full derivations,
+earlier calibrations, and the development history.
 
-the notebook is the main deliverable. [REPORT.md](REPORT.md) contains the full
-math and development history; [artifacts/](artifacts/) holds the numerical
-evidence. the cat can meow; keeping it safe while listening is the unfinished bit.
+## AI ACKNOWLEDGEMENT
+AI was used in preperation of literature review, cited in the notebook, generating the presentation as well as code debugging and help bouncing off of ideas, It was also used to help create testing files. AI was also used for cleaning and rewording the report!! 
