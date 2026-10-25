@@ -1,0 +1,3 @@
+horizon us,paired shots,joint minus flat error,paired 95% low,paired 95% high,accuracy improvement resolved
+3.0,1024,0.021484375,-0.030352158496395276,0.07315919133716127,False
+21.0,1024,0.0048828125,-0.011032889986446998,0.020702731816299363,False

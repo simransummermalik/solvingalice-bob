@@ -1,0 +1,41 @@
+{
+  "plan_sha256": "d7755996b183c0c770c09a21591d18f883d15f37a1b7670c98e918ccbae55e53",
+  "software_versions": {
+    "dynamiqs": "0.3.7",
+    "jax": "0.12.0.1",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "pandas": "3.1.0"
+  },
+  "model": "chi/2pi = 0.30 MHz, buffer Kerr/2pi = 3.3 MHz, memory dephasing/2pi = 1 kHz, ideal detector",
+  "primary_horizon_us": 21.0,
+  "shots": 1024,
+  "assignment_errors": 14,
+  "assignment_error": 0.013671875,
+  "assignment_95_interval": [
+    0.008161286776036565,
+    0.02281767262226188
+  ],
+  "receiver_ensemble_checks_passed": true,
+  "absolute_accuracy_threshold_met": true,
+  "joint_receiver_convergence_supported": false,
+  "accuracy_improvement_vs_flat_resolved": false,
+  "idle_protection": {
+    "active rate": 0.00010779629362093686,
+    "matched idle rate": 6.45491224019149e-05,
+    "active/idle": 1.669988523619943,
+    "active numerical indicator": 4.3394157017530364e-08,
+    "idle numerical indicator": 1e-08,
+    "sensitivity lower ratio": 1.66905768627244,
+    "sensitivity upper ratio": 1.6709196494242184,
+    "threshold": 1.1,
+    "idle resolved": true,
+    "preservation test": "failed",
+    "strict original idle rate": 5.178487429216598e-05,
+    "note": "sensitivity bounds from cutoffs/tolerance/fit windows; not statistical confidence intervals"
+  },
+  "recomputed_first_cycle_information_difference": 8.881784197001252e-16,
+  "recomputed_first_cycle_damage_difference": 9.894463720572233e-13,
+  "reference_endpoint_reproduced": true,
+  "both_requested_claims_supported": false
+}

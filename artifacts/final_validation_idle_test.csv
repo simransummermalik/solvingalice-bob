@@ -1,0 +1,2 @@
+active rate,matched idle rate,active/idle,active numerical indicator,idle numerical indicator,sensitivity lower ratio,sensitivity upper ratio,threshold,idle resolved,preservation test,strict original idle rate,note
+0.00010779629362093686,6.45491224019149e-05,1.669988523619943,4.3394157017530364e-08,1e-08,1.66905768627244,1.6709196494242184,1.1,True,failed,5.178487429216598e-05,sensitivity bounds from cutoffs/tolerance/fit windows; not statistical confidence intervals

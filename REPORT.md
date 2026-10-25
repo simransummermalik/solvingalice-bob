@@ -20,10 +20,12 @@ a separate repeated-cycle test at `chi/2pi = 0.15 MHz` gives `89.0%` less
 extra readout decay than the original pulse. those are two numerical tests with
 their own calibrations.
 
-the receiver test used the earlier breathing pulse in the ideal model:
-`162` errors versus `182` for the original pulse on 1024 paired records. its
-confidence interval still includes no improvement. that does not establish
-assignment fidelity for the final pulse in either nonlinear stress model.
+the final nonlinear pulse now has a separate, frozen receiver audit: `14/1024`
+assignment errors after `21 us`, or `1.37%` with a 95% Wilson interval of
+`0.82–2.28%`. the matched flat pulse gives `9/1024`, so improved accuracy has
+not been demonstrated. the joint pulse's total contrast-decay rate is about
+`1.67` times its matched idle rate: idle protection fails our 10% tolerance.
+section 3.5 separates these outcomes from the earlier development results.
 
 <p align="center">
   <img src="artifacts/24_cross_kerr_aware_readout.png" alt="cross-Kerr-aware readout comparison" width="900">
@@ -125,6 +127,8 @@ effective single-mode model and the full memory-buffer model.
 | strong-`chi` joint-pulse information | `0.79066` at `32 x 8` | `artifacts/pump_detuning_chi0p30_recalibrated_32_8.csv` |
 | strong-`chi` endpoint-damage improvement | `20.0%` below matched flat `1.5 us` | `artifacts/pump_detuning_chi0p30_flat_matched_32_8.csv` |
 | repeated-readout extra-rate reduction at `chi/2pi = 0.15 MHz` | `89.0%` versus original | `artifacts/pump_detuning_nonlinear_cycles_32_8.csv` |
+| final nonlinear joint-pulse assignment error, `21 us` | `14/1024 = 1.37%`, 95% interval `0.82–2.28%` | `artifacts/final_validation_receiver.csv` |
+| final nonlinear active / matched-idle contrast rate | about `1.67`; preservation test fails | `artifacts/final_validation_idle_test.csv` |
 
 ### 3.2 what the final proposal does
 
@@ -333,6 +337,163 @@ readout under a specified schedule. it is a fitted contrast-decay rate, distinct
 from the stationary $\Gamma_X$ in Task 2.1. the joint readout still adds decay
 above its own idle control. settings are recorded in
 [pump_detuning_cycle_settings.json](artifacts/pump_detuning_cycle_settings.json).
+
+### 3.5 the final claim audit: can we read it, and does it stay protected?
+
+the feedback identified two missing tests. a pulse can leave less endpoint
+damage without accurately assigning the input bit. it can also beat another
+readout while still losing protection relative to doing no readout. we froze
+[a separate audit plan](artifacts/final_validation_plan.json) before generating
+its samples, with the final `chi/2pi = 0.30 MHz` controls unchanged.
+
+we use `alpha = 2.1`, buffer Kerr `3.3 MHz`, and memory dephasing `1 kHz`.
+the joint control has buffer fraction `0.45`, detuning factor `1`, and memory
+scale `1.185`. the flat baseline has a `1.5 us` window, `20 ns` edges, and
+memory-drive peak `0.374 g2`. both repeat seven `3 us` cycles with no buffer or
+memory reset. each input is initially a coherent state near one codeword, with
+the buffer in vacuum. this is a test of the initial bit, using the full record;
+it does not assume the bit is unchanged at the endpoint.
+
+#### assignment uses the measured channel
+
+the receiver sees the buffer homodyne record only. all dissipative channels are
+unraveled to keep pure-state trajectories affordable, but the simulated memory
+loss and dephasing records are discarded before classification. neither the
+hidden state nor the true input label is supplied to the classifier.
+
+for each protocol, deterministic master-equation signals fix the receiver:
+
+$$
+\mu_\pm(t)=2\sqrt{\kappa_b}\,\operatorname{Re}\langle b\rangle_\pm(t),
+\qquad w(t)=\mu_+(t)-\mu_-(t),
+$$
+
+$$
+S=\frac{\displaystyle\int_0^{t_f}w(t)
+\left[dY_t-\frac{\mu_+(t)+\mu_-(t)}2\,dt\right]}
+{\displaystyle\sqrt{\int_0^{t_f}w(t)^2\,dt}}.
+$$
+
+positive `S` assigns the positive initial bit; zero is counted as an error.
+midpoint subtraction removes common buffer offsets. the threshold is fixed at
+zero before sampling; we do not fit it to the validation labels. the homodyne
+reference follows the chirped frame derived in section 3.2.1. detector efficiency
+is `1`, so this is simulated ideal detection, not a hardware-fidelity result.
+
+the primary sample is `512` independent records per input, `24 x 6` cutoff,
+stochastic step `0.0002 us`, and fixed seed `73261025`. the primary horizon is
+`21 us`; `3 us` is a predeclared secondary result. the audit's accuracy criterion
+is a 95% upper assignment-error bound below `5%`. that is our operational
+criterion, not a threshold specified by the organizers.
+
+| protocol | errors after `3 us` | errors after `21 us` | `21 us` error, 95% Wilson interval |
+| --- | ---: | ---: | --- |
+| joint pulse | `209/1024` | `14/1024` | `1.37%`, `0.82–2.28%` |
+| matched flat pulse | `187/1024` | `9/1024` | `0.88%`, `0.46–1.66%` |
+
+the final joint pulse passes the absolute accuracy criterion at `21 us`, but
+not at `3 us`. the flat pulse also passes at `21 us`. lower damage has not
+turned into a demonstrated accuracy advantage. the paired comparison uses
+common noise seeds across protocols and conservative exact bounds on the two
+discordant-error counts. at `21 us`, joint minus flat is `+0.49` percentage
+points, with a conservative 95% interval of `[-1.10, +2.07]` percentage points;
+its result is saved in
+[final_validation_accuracy_comparison.csv](artifacts/final_validation_accuracy_comparison.csv).
+
+#### idle protection gets its own denominator
+
+we evolve both inputs with the deterministic master equation and form
+
+$$
+C(t)=\frac{\operatorname{Tr}[Z\rho_+(t)]-
+\operatorname{Tr}[Z\rho_-(t)]}{2},
+\qquad Z=P_{Z_+}-P_{Z_-}.
+$$
+
+at cycle boundaries, we fit `log C = intercept - rate * time`, starting at
+cycle `2` through cycle `7`. the idle control removes the memory readout drive
+and retains the joint buffer ramp and detuning. this gives the additional cost
+of turning on readout with those auxiliary controls already present. we also
+report the original idle with all added controls removed.
+
+| protocol, `32 x 8` | total contrast-decay rate per `us` |
+| --- | ---: |
+| joint active | `1.077963e-4` |
+| joint matched idle | `6.454912e-5` |
+| original active | `3.112266e-4` |
+| original idle | `5.178487e-5` |
+| matched flat active | `2.821067e-4` |
+
+the active / matched-idle ratio is `1.66999`, above our predeclared `1.10`
+limit. relative to the unmodified original idle, the joint rate is about
+`2.08` times higher. reduced extra readout decay is useful, but the current
+pulse does not preserve the idle protection. these are finite-time,
+cycle-boundary contrast rates; they are distinct from Task 2.1's stationary
+generator rates and from a direct count of individual bit-flip events.
+
+as an additional post-audit diagnostic, we divide each input's logical
+expectation by its code-space population before forming the contrast. the
+joint and idle fitted rates remain `1.077963e-4` and `6.454911e-5` per `us`.
+their code populations drift by less than `2.2e-10` over the fitted cycle
+boundaries, so accumulating leakage does not explain the excess contrast
+decay. [the diagnostic table](artifacts/final_validation_code_population.csv)
+records all five protocols. this supplements the frozen test; it does not
+replace its observable or threshold, or establish protection across cat sizes.
+
+#### checks that can actually reject a result
+
+we repeat the joint and idle density-matrix calculation at `36 x 10`, tighten
+`rtol/atol` from `2e-10/2e-12` to `5e-11/5e-13`, and start the fit at cycles
+`2`, `3`, and `4`. the active rate changes by about `0.0403%` on increasing the
+cutoff, while the idle rate changes by about `0.0127%`; tighter tolerances change
+them by less than `1e-12` per `us`. this is far too small to explain a 67%
+excess over idle. the sensitivity bounds in
+[the preservation test](artifacts/final_validation_idle_test.csv) span
+`1.66906–1.67092`. they combine these
+changes, fit residual uncertainty, and a `1e-8/us` numerical floor. they are
+numerical indicators, not statistical confidence intervals. trace, boundary
+population, and final density-matrix eigenvalue checks are saved with the rates;
+small negative eigenvalues from the non-positivity-preserving ODE solver are
+reported explicitly rather than silently clipped.
+
+the stochastic calculation also has an ensemble check. an initial fast scheme
+normalized each ket but omitted the full Kraus-map normalization. on this long
+nonlinear run it gave about `8.05` memory photons, against the master equation's
+`4.406`. those apparent assignment scores are rejected and retained in
+[the numerical failure record](artifacts/final_validation_rejected_numerics.json).
+the repaired calculation normalizes the full Rouchon map and tests completeness,
+sparse versus dense Hamiltonian actions, and a full one-step update. the main
+joint sample gives `4.40046` photons with standard error `0.00538`, versus
+deterministic `4.40586`; the artificial heating is gone at this check's resolution.
+
+to make that calculation affordable, the Hamiltonian and state-independent
+normalizer are precomputed at `5 ns` midpoint bins. the refinement sample halves
+both the stochastic step and those bins, so an error in either discretization
+can appear. an independent larger-cutoff sample uses `32 x 8`. each check has
+`128` records per input with its own fixed seed. we require a conservative 95%
+error-difference interval inside `±3` percentage points to call equivalence
+supported; otherwise it remains unresolved. the complete outcomes are in
+[the receiver convergence table](artifacts/final_validation_receiver_convergence.csv)
+and [generated findings](artifacts/final_validation_findings.md). the joint
+half-step sample gives `3/256` errors (`1.17%`); its conservative difference
+interval is `[-2.24, +3.07]` percentage points relative to the main run.
+that narrowly misses the predeclared `±3`-point equivalence margin. agreement
+of the point estimates does not resolve that statistical uncertainty, so full
+receiver convergence is not claimed. the larger-cutoff joint sample gives
+`2/256` errors (`0.78%`) and supports that equivalence margin. controls,
+sample counts, horizons, seeds, and claim thresholds were kept fixed through
+the solver repair, which is recorded in
+[final_validation_numerics.json](artifacts/final_validation_numerics.json).
+the [implementation check record](artifacts/final_validation_implementation_checks.json)
+also reruns the operator, full-step, and completeness assertions from the
+submitted notebook source for both protocols and all three numerical settings.
+
+the audit independently reproduces the old first-cycle information within
+`8.9e-16` and endpoint damage within `9.9e-13`.
+the final notebook section contains the whole audit implementation and can
+reload the frozen evidence or recompute it. its summary records each claim
+separately; `both_requested_claims_supported` is false because idle protection
+fails. that failure is part of our result, not a box to tick after code runs.
 
 ## 4. introductory track: every task, with the math
 
@@ -904,8 +1065,10 @@ the state geometry and the measurement frame.
 the nonlinear stress test told us the frequency correction was needed.*
 
 the strategy improves the readout's damage and recovery tradeoff relative to
-other active readouts. maintaining the idle cat's $\Gamma_X$ during measurement
-has not been demonstrated. that part of the capstone target remains open.
+other active readouts. the final audit demonstrates accurate long-record
+assignment in the model, but fails the idle-preservation test. that part of the
+capstone target remains unmet; section 3.5 gives the measurements behind both
+conclusions.
 
 ### 5.6 standard-track checklist
 
@@ -916,7 +1079,7 @@ has not been demonstrated. that part of the capstone target remains open.
 | 2.3, both buffer signals, contrast, and settling | section 5.2; figure 12 | metastable plateau and explicit 2% tolerance |
 | 2.4(a), drive implementation and surviving circuit terms | section 5.3; `circuit_matrix_elements.csv` | resonant sine test, with omitted effects stated |
 | 2.4(b), contrast versus $\Gamma_X$ as drive increases | section 5.4; `dc_readout_tradeoff.csv` | stationary DC sweep at $\alpha=1.2$ |
-| 2.4(c–d), propose, simulate, and explain improved readout | sections 3 and 5.5; control tables; phase audit | improved active-readout tradeoff; idle protection remains unproved |
+| 2.4(c–d), propose, simulate, and explain improved readout | sections 3 and 5.5; control tables; final audit | improved damage tradeoff and accurate long-record readout; idle-preservation test fails |
 
 <a id="decision-schema"></a>
 
@@ -1042,8 +1205,13 @@ we think the result is interesting precisely because the boundary is explicit:
 - the paired noisy-record improvement from `182` to `162` errors has a 95%
   interval of approximately `[-5.4, +1.5]` percentage points for the new-minus-
   original error fraction, so it is not a resolved receiver win;
+- the final nonlinear joint pulse has `14/1024` errors at `21 us`, while flat
+  has `9/1024`; it passes our absolute accuracy target without establishing
+  improved accuracy over flat. at `3 us`, its error remains about `20%`;
 - repeated readout improvement is measured relative to the original active
   readout after subtracting idle control. it does not mean the readout is free;
+- the final active / matched-idle contrast-rate ratio is about `1.67`. the
+  preservation test fails even after the numerical sensitivity checks;
 - cutoff convergence is checked for the reported observables and tails, but no
   finite calculation proves an infinite-dimensional oscillator result;
 - the chirp implementation assumes synchronized pump, buffer-drive, and receiver
@@ -1054,8 +1222,9 @@ we think the result is interesting precisely because the boundary is explicit:
 
 our supported claim is an improved information-versus-damage tradeoff in the
 specified numerical models, with a derived microwave phase prescription.
-preservation of the idle bit-decay rate and hardware measurement fidelity remain
-open tests.
+the final audit adds accurate ideal-detector assignment over `21 us`; it does
+not add an accuracy advantage over flat readout or preservation of idle
+protection. hardware measurement fidelity remains untested.
 
 ## 9. how to reproduce it
 
@@ -1091,11 +1260,44 @@ strong-cross-Kerr endpoint comparison. it does not regenerate every saved
 exploratory table or the separate repeated-cycle data. those are included as
 saved results with settings and scope stated above.
 
+the final four cells run independently of that earlier setup. leave
+`final_validation_recompute = False` to inspect all audit tables; switch it to
+`True` to regenerate density-matrix fits and stochastic receiver samples with
+setting-keyed checkpoints. the plan and solver-settings JSON files in
+`artifacts/` are required inputs. this path includes both inputs and the final
+nonlinear repeated-cycle experiment.
+
+### clean environment check
+
+we installed the pinned requirements into a new virtual environment and ran
+the notebook in a fresh kernel and an isolated working directory. this checks
+execution with the supplied artifacts; expensive exploratory sections that
+default to saved results still load those results. it is not a claim that every
+historical control search is repeated on every Run All.
+
+the [machine-readable run record](artifacts/clean_environment_validation.json)
+records the interpreter, package versions, execution status, and source hashes
+for each executed code cell. all `105` cells (`55` code cells) completed without
+an execution error. the corresponding
+[executed notebook](artifacts/clean_environment_validation.ipynb) preserves the
+outputs, which have also been copied into the submission notebook after an
+exact source comparison. a separate [data-integrity check](artifacts/final_validation_data_checks.json)
+recounts all six saved score samples, verifies both input counts and plan
+hashes, and checks the reported Wilson intervals against SciPy's implementation.
+to repeat the notebook check using a newly installed environment:
+
+```sh
+.venv/bin/python -m pip check
+.venv/bin/python scripts/verify_clean_notebook.py
+```
+
 ### files worth opening
 
 | file | why it exists |
 | --- | --- |
 | [`cat_qubits.ipynb`](cat_qubits.ipynb) | full derivation, computation, plots, and report-facing outputs |
+| [`artifacts/final_validation_summary.json`](artifacts/final_validation_summary.json) | separate final accuracy, convergence, and preservation decisions |
+| [`artifacts/25_final_claim_audit.png`](artifacts/25_final_claim_audit.png) | final assignment error and failed preservation test |
 | [`artifacts/24_cross_kerr_aware_readout.png`](artifacts/24_cross_kerr_aware_readout.png) | final capstone figure |
 | [`artifacts/pump_detuning_findings.md`](artifacts/pump_detuning_findings.md) | one-paragraph final numerical finding |
 | [`artifacts/pump_detuning_chi0p30_recalibrated_32_8.csv`](artifacts/pump_detuning_chi0p30_recalibrated_32_8.csv) | strong-`chi` original vs joint pulse |
@@ -1149,9 +1351,11 @@ we kept the joint pulse because it passed the checks that mattered together:
   pump, buffer-drive, and homodyne phases.
 
 the joint pulse has the best endpoint score among our listed strong-cross-Kerr
-candidates and a useful result in the separate cycle test. the next step is to
-test its receiver with the chirped phase reference and calibrated hardware
-response. the earlier noisy breathing test leaves that question open.
+candidates and a useful result in the separate cycle test. the final receiver
+audit now shows low error after seven cycles, with no established advantage
+over flat readout. its failed idle-protection test means the next design should
+target total active decay directly. another favorable endpoint plot would not
+answer that question. calibrated hardware response is still outside this model.
 
 the project started with “can the buffer's ringing help?” our simulations point
 to a useful way of doing it: shape the temporary cat expansion and keep the

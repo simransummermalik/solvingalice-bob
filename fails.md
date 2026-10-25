@@ -86,3 +86,32 @@ quadrature during the temporary cat expansion. across `-0.06` to `+0.06` of
 the idle buffer-drive amplitude, the information changed, but the damage
 stayed around `2.54e-3` and did not beat the real buffer-drive ramp. it is
 kept as a failed correction rather than quietly folded into the winning pulse.
+
+## the fast trajectory step on long nonlinear records
+
+the fast ket-normalized trajectory scheme looked fine in the earlier ideal
+model, but using it for 21 us with the added Kerr terms produced about 8.05
+photons where the master equation predicts 4.406. its apparent 34.6% assignment
+error is therefore not a physical result. we retained the failed check and
+rejected those scores.
+
+normalizing the Kraus map as well as the state fixes the pilot's spurious
+heating. the final audit also requires the trajectory ensemble to agree with
+the deterministic photon number, then checks a smaller step and larger cutoff.
+normalizing a ket is not enough to certify a stochastic integration.
+
+## less damage did not mean idle protection
+
+the final nonlinear joint pulse reads the initial bit with 14 errors in 1024
+records after 21 us. that part works in the ideal-detector model. flat readout
+gets 9 errors, so there is no accuracy win to claim here.
+
+the protection comparison is the bigger problem. joint active contrast decays
+about 1.67 times faster than its matched idle, even though it is much gentler
+than our original active pulse. larger cutoffs and tighter tolerances do not
+remove that difference. our 10% preservation test fails.
+
+so the next control objective has to include total active decay relative to
+idle. optimizing endpoint damage and subtracting the idle cost let us improve
+the wrong score for this particular claim. the cat is readable, but it is
+still paying rent.

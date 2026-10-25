@@ -1,0 +1,77 @@
+{
+  "plan_sha256": "d7755996b183c0c770c09a21591d18f883d15f37a1b7670c98e918ccbae55e53",
+  "checks": [
+    {
+      "condition": "main",
+      "protocol": "joint",
+      "cutoff": [
+        24,
+        6
+      ],
+      "dt_us": 0.0002,
+      "passed": true,
+      "seconds": 8.977739833062515
+    },
+    {
+      "condition": "main",
+      "protocol": "flat",
+      "cutoff": [
+        24,
+        6
+      ],
+      "dt_us": 0.0002,
+      "passed": true,
+      "seconds": 0.979903458035551
+    },
+    {
+      "condition": "half step",
+      "protocol": "joint",
+      "cutoff": [
+        24,
+        6
+      ],
+      "dt_us": 0.0001,
+      "passed": true,
+      "seconds": 1.5130508749280125
+    },
+    {
+      "condition": "half step",
+      "protocol": "flat",
+      "cutoff": [
+        24,
+        6
+      ],
+      "dt_us": 0.0001,
+      "passed": true,
+      "seconds": 1.2966931669507176
+    },
+    {
+      "condition": "larger cutoff",
+      "protocol": "joint",
+      "cutoff": [
+        32,
+        8
+      ],
+      "dt_us": 0.0002,
+      "passed": true,
+      "seconds": 8.456700499984436
+    },
+    {
+      "condition": "larger cutoff",
+      "protocol": "flat",
+      "cutoff": [
+        32,
+        8
+      ],
+      "dt_us": 0.0002,
+      "passed": true,
+      "seconds": 1.652678083977662
+    }
+  ],
+  "assertions": [
+    "sparse Hamiltonian action agrees with dense model",
+    "full one-step update agrees with dense normalized Rouchon formula",
+    "Kraus-map completeness"
+  ],
+  "success": true
+}

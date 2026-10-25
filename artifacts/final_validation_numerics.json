@@ -1,0 +1,13 @@
+{
+  "solver": "normalized Rouchon1 Kraus step, with precomputed Cholesky normalization",
+  "Hamiltonian_midpoint_bin_us": 0.005,
+  "half_step_Hamiltonian_bin_us": 0.0025,
+  "implementation_checks": "Hamiltonian actions match Dynamiqs operators; normalized map completeness is checked before sampling; ensemble means and joint time/bin refinement are required",
+  "normalize_kraus_map": true,
+  "execution_batch_size": 512,
+  "ensemble_photon_number_absolute_tolerance": 0.05,
+  "ensemble_photon_number_standard_errors": 4.0,
+  "revision_reason": "The fast ket-normalized but not Kraus-normalized scheme at dt=0.0002 us failed the unconditional ensemble photon-number check in the nonlinear model. Its assignment results are rejected.",
+  "statistical_plan_unchanged": "Controls, sample counts, per-trajectory seeds, horizons and claim thresholds remain those in final_validation_plan.json. Larger computational batches amortize state-independent Kraus normalization.",
+  "required_checks": "Compare ensemble mean final photon number with the deterministic master equation, then evaluate half-step and larger-cutoff checks before making accuracy claims."
+}

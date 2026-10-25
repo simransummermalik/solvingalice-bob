@@ -1,0 +1,6 @@
+protocol,total contrast rate,code-conditioned contrast rate,max code-population drift cycles 2 to 7,min code population cycles 2 to 7,diagnostic scope
+joint,0.00010779629362093686,0.00010779629252228897,3.903743994726483e-11,0.9976805150697311,post-audit leakage check; does not change the frozen claim test
+joint idle,6.45491224019149e-05,6.454911092106401e-05,2.1627122315237557e-10,0.9976805959543593,post-audit leakage check; does not change the frozen claim test
+original,0.0003112265752363538,0.00031122657848755257,2.7686138936999782e-09,0.9973266137593835,post-audit leakage check; does not change the frozen claim test
+original idle,5.178487429216598e-05,5.1784851662469895e-05,4.1795455985038643e-10,0.9973277195508264,post-audit leakage check; does not change the frozen claim test
+flat,0.00028210674858030735,0.00028210673883885724,2.1369888081324007e-09,0.99732530483644,post-audit leakage check; does not change the frozen claim test

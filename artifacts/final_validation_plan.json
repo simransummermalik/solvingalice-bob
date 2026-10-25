@@ -1,0 +1,51 @@
+{
+  "schema": "final-validation-v1",
+  "time_unit": "microsecond",
+  "scope": "frozen final-pulse readout and idle-protection audit, with explicit claim tests",
+  "alpha": 2.1,
+  "g2_over_2pi_MHz": 0.763,
+  "kb_over_2pi_MHz": 2.6,
+  "ka_over_2pi_MHz": 0.0093,
+  "chi_over_2pi_MHz": 0.30,
+  "buffer_Kerr_over_2pi_MHz": 3.3,
+  "memory_dephasing_over_2pi_MHz": 0.001,
+  "period_us": 3.0,
+  "drive_duration_us": 1.5,
+  "cycles": 7,
+  "initial_state": "coherent +alpha or -alpha, buffer vacuum",
+  "reset_between_cycles": false,
+  "closed_peak": 1.8795341516644681,
+  "closed_coefficients": [-0.6746844318247125, -5.24338332425097, -1.3494932750752813, -5.007630191024599, -1.3489265537688762, -4.5021024573826445, -1.3429396969528073, -3.6227892943858127, -1.306672468697821, -1.8902545483245554, 0.3135432669218839, -0.6635214864244275, 0.1124363541823458, -0.1871366514170797, 0.03132103329410212],
+  "protocols": {
+    "joint": {"kind": "closed", "buffer_fraction": 0.45, "detuning_factor": 1.0, "memory_scale": 1.185},
+    "joint idle": {"kind": "closed", "buffer_fraction": 0.45, "detuning_factor": 1.0, "memory_scale": 0.0},
+    "original": {"kind": "closed", "buffer_fraction": 0.0, "detuning_factor": 0.0, "memory_scale": 1.275},
+    "original idle": {"kind": "closed", "buffer_fraction": 0.0, "detuning_factor": 0.0, "memory_scale": 0.0},
+    "flat": {"kind": "flat", "buffer_fraction": 0.0, "detuning_factor": 0.0, "memory_peak_over_g2": 0.374}
+  },
+  "receiver": "fixed deterministic difference-template matched filter with deterministic midpoint subtraction; buffer homodyne record only",
+  "detector_efficiency": 1.0,
+  "primary_horizon_us": 21.0,
+  "secondary_horizon_us": 3.0,
+  "record_bin_us": 0.005,
+  "shot_batch_size": 64,
+  "sampling": {
+    "main": {"cutoff": [24, 6], "dt_us": 0.0002, "shots_per_bit": 512, "seed": 73261025},
+    "half step": {"cutoff": [24, 6], "dt_us": 0.0001, "shots_per_bit": 128, "seed": 74261025},
+    "larger cutoff": {"cutoff": [32, 8], "dt_us": 0.0002, "shots_per_bit": 128, "seed": 75261025}
+  },
+  "protection_primary_cutoff": [32, 8],
+  "protection_larger_cutoff": [36, 10],
+  "primary_rtol": 2e-10,
+  "primary_atol": 2e-12,
+  "tighter_rtol": 5e-11,
+  "tighter_atol": 5e-13,
+  "fit_start_cycles": [2, 3, 4],
+  "audit_thresholds": {
+    "assignment_error_upper_95": 0.05,
+    "maximum_active_over_idle_rate": 1.10,
+    "trajectory_equivalence_margin": 0.03,
+    "rate_absolute_numerical_floor_per_us": 1e-8,
+    "note": "operational thresholds chosen for this audit before its new results; not organizer-specified rules"
+  }
+}

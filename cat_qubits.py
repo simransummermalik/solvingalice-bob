@@ -3511,3 +3511,561 @@ assert frame_state_error < 2e-8 and frame_signal_error < 2e-8  # both independen
 Path("artifacts").mkdir(exist_ok=True)  # allow this cell to run independently
 Path("artifacts/pump_detuning_phase_audit.json").write_text(json.dumps(frame_summary, indent=2)+"\n")  # generated numerical audit
 print(json.dumps(frame_summary, indent=2))  # keep the evidence visible in the notebook
+
+# %% [markdown]
+# final checks requested by the feedback
+#
+# the earlier damage result did not establish either final-pulse assignment
+# accuracy or preservation of idle bit protection. this audit tests them
+# separately in the same strong nonlinear model: chi/2pi = 0.30 MHz, buffer
+# Kerr/2pi = 3.3 MHz, memory dephasing/2pi = 1 kHz, and detector efficiency one.
+#
+# the plan in artifacts/final_validation_plan.json fixes the controls, sample
+# counts, seeds, horizons, fit windows, and thresholds before these new outcomes.
+# the operational accuracy target is a 95% upper error bound no greater than 5%
+# after seven 3 μs cycles. the operational preservation limit is a total active
+# contrast-decay rate no more than 1.10 times the corresponding idle rate.
+# these are our audit thresholds, not organizer-specified rules.
+#
+# the idle comparison retains the joint pulse's buffer controls and removes only
+# its memory readout drive. we also report the original unmodified idle rate.
+# a reduction in active-minus-idle decay is not a preservation test.
+#
+# the matched filter uses both deterministic buffer means. with
+# $\mu_\pm(t)=2\sqrt{\kappa_b}\operatorname{Re}\langle b\rangle_\pm(t)$,
+#
+# $$
+# S=\frac{\int(\mu_+-\mu_-)
+# [dY-\frac12(\mu_++\mu_-)\,dt]}
+# {\sqrt{\int(\mu_+-\mu_-)^2\,dt}}.
+# $$
+#
+# the sign of S assigns the initial bit. the deterministic midpoint removes any
+# common buffer offset; no noisy labels choose the template or threshold.
+# 3 μs is a secondary result and 21 μs is the fixed primary horizon.
+# no state is reset between cycles. the homodyne reference is the chirped one
+# derived above.
+#
+# we unravel all three channels to keep trajectory states small, then give only
+# the buffer record to the receiver. the unobserved records are discarded; they
+# are never used for feedback or classification. this gives the buffer-record
+# marginal, not a buffer-only conditional state. see the
+# [Dynamiqs stochastic-solver documentation](https://www.dynamiqs.org/stable/python_api/integrators/dsmesolve.html).
+#
+# the original fast ket-normalized scheme failed an ensemble check in this
+# nonlinear model: it produced about 8.05 photons where the master equation gives
+# 4.406. its apparent assignment errors are retained as rejected numerical
+# results, not used for physical accuracy claims. the corrected runs normalize the
+# Kraus map as well as the ket, and must pass an ensemble photon-number check.
+# artifacts/final_validation_numerics.json records this solver revision; controls,
+# seeds, sample counts, horizons, and claim thresholds are unchanged. computational
+# batches are larger to amortize the state-independent matrix normalization.
+#
+# the normalized Rouchon map is precomputed at Hamiltonian midpoint bins of
+# 5 ns for speed. the half-step check halves both the stochastic step and this
+# Hamiltonian bin. the code checks operator actions against the Dynamiqs model,
+# checks Kraus-map completeness, and compares a full update with its dense formula.
+# this is a numerical implementation change, not a change to the physical model.
+#
+# main receiver tests use 512 records per bit at 24 x 6. independent half-step and
+# larger-cutoff checks use 128 records per bit. error intervals, paired differences,
+# and a conservative 3-percentage-point equivalence test are shown. an unresolved
+# difference remains unresolved.
+#
+# the protection fits use 32 x 8, repeat the joint and idle cases at 36 x 10,
+# tighten solver tolerances, and vary the fitting window. cutoff/tolerance/window
+# changes form a numerical sensitivity indicator, not a statistical confidence
+# interval. the small-cat stationary Gamma_X from Task 2.1 and this repeated-cycle
+# contrast rate remain different quantities.
+#
+# the following cells are independent of the earlier setup. leave the final
+# recompute switch false to inspect saved evidence; true regenerates this audit
+# and reuses setting-keyed checkpoints. the entire calculation, including the
+# repeated-cycle tests, is now included here.
+
+# %%
+import os  # put the numerical caches in the project
+from pathlib import Path  # the audit is self-contained after a kernel restart
+os.environ.setdefault("MPLCONFIGDIR", str(Path.cwd()/".cache"/"matplotlib"))
+os.environ.setdefault("XDG_CACHE_HOME", str(Path.cwd()/".cache"))
+import json, hashlib, time  # record settings, cache identity, and solve times
+import importlib.metadata as metadata  # keep the actual numerical environment
+import numpy as np  # analyze expectations and noisy records
+import pandas as pd  # save the audit tables
+from scipy.stats import norm  # normal quantiles for Wilson intervals
+import dynamiqs as dq  # integrate the requested two-mode Lindblad model
+import jax  # independent, reproducible trajectory keys
+import jax.numpy as jnp  # time-dependent Hamiltonian envelopes
+
+dq.set_precision("double")  # rare decay rates need double precision
+dq.set_progress_meter(False)  # print one line per completed batch instead
+fv_folder = Path("artifacts")  # inputs and computed evidence travel with the notebook
+fv_plan = json.loads((fv_folder/"final_validation_plan.json").read_text())
+fv_numerics = json.loads((fv_folder/"final_validation_numerics.json").read_text())  # reject the unstable fast variant
+fv_plan_hash = hashlib.sha256(json.dumps(fv_plan, sort_keys=True).encode()).hexdigest()
+fv_versions = {name: metadata.version(name) for name in ["dynamiqs", "jax", "numpy", "scipy", "pandas"]}
+fv_g, fv_kb, fv_ka, fv_chi, fv_kerr, fv_phi = 2*np.pi*np.array([fv_plan[key] for key in
+    ["g2_over_2pi_MHz", "kb_over_2pi_MHz", "ka_over_2pi_MHz", "chi_over_2pi_MHz", "buffer_Kerr_over_2pi_MHz", "memory_dephasing_over_2pi_MHz"]])
+fv_alpha, fv_period, fv_duration = fv_plan["alpha"], fv_plan["period_us"], fv_plan["drive_duration_us"]
+fv_times = np.linspace(0, fv_plan["primary_horizon_us"], round(fv_plan["primary_horizon_us"]/fv_plan["record_bin_us"])+1)
+
+
+def fv_model(label, na, nb):
+    spec = fv_plan["protocols"][label]  # all candidates were frozen before this audit
+    a, b = dq.destroy(na, nb)  # full memory-buffer tensor operators
+    n_a, n_b = a.dag()@a, b.dag()@b
+    h0 = fv_g*(a@a@b.dag()+a.dag()@a.dag()@b)-fv_g*fv_alpha**2*(b+b.dag())
+    h0 = h0+fv_chi*(n_a@n_b)+fv_kerr/2*(b.dag()@b.dag()@b@b)
+    h0 = h0-spec["detuning_factor"]*fv_chi*fv_alpha**2*n_b  # static correction remains between cycles
+    coefficients = jnp.asarray(fv_plan["closed_coefficients"])
+
+    def ramp(t):
+        u = jnp.mod(t, fv_period)  # no state reset at a cycle boundary
+        return jnp.where(u < fv_duration, jnp.sin(jnp.pi*u/fv_duration)**2, 0.0)
+
+    def memory(t):
+        u = jnp.mod(t, fv_period)
+        if spec["kind"] == "flat":
+            edge = jnp.minimum(jnp.minimum(u, fv_duration-u)/0.02, 1.0)
+            value = spec["memory_peak_over_g2"]*fv_g*jnp.sin(jnp.pi*edge/2)**2
+        else:
+            value = spec["memory_scale"]*fv_plan["closed_peak"]*ramp(t)*jnp.sum(
+                coefficients*jnp.cos(jnp.arange(len(coefficients))*jnp.pi*u/fv_duration))
+        return jnp.where(u < fv_duration, value, 0.0)
+
+    h = h0+dq.modulated(memory, a+a.dag())
+    h = h+dq.modulated(lambda t: -fv_g*fv_alpha**2*spec["buffer_fraction"]*ramp(t), b+b.dag())
+    h = h+dq.modulated(lambda t: -spec["detuning_factor"]*fv_chi*fv_alpha**2*spec["buffer_fraction"]*ramp(t), n_b)
+    jumps = [np.sqrt(fv_kb)*b, np.sqrt(fv_ka)*a, np.sqrt(fv_phi)*n_a]  # only channel zero is supplied to the classifier
+    even = dq.unit(dq.coherent(na, fv_alpha)+dq.coherent(na, -fv_alpha))
+    odd = dq.unit(dq.coherent(na, fv_alpha)-dq.coherent(na, -fv_alpha))
+    z_plus, z_minus = (even+odd)/np.sqrt(2), (even-odd)/np.sqrt(2)
+    logical = dq.tensor(dq.todm(z_plus)-dq.todm(z_minus), dq.eye(nb))
+    code = dq.tensor(dq.todm(even)+dq.todm(odd), dq.eye(nb))
+    tail_a = dq.tensor(dq.fock_dm(na, na-2)+dq.fock_dm(na, na-1), dq.eye(nb))
+    tail_b = dq.tensor(dq.eye(na), dq.fock_dm(nb, nb-1))
+    return h, jumps, [b, logical, n_a, tail_a, tail_b, code]
+
+
+def fv_cache_path(settings):
+    settings = {"engine": "frozen-final-audit-v1", "plan": fv_plan_hash, "versions": fv_versions, **settings}
+    digest = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
+    folder = fv_folder/"checkpoints"
+    folder.mkdir(exist_ok=True)
+    return folder/f"final-audit-{digest}.npz"
+
+
+def fv_deterministic(label, na, nb, sign, tight=False):
+    rtol = fv_plan["tighter_rtol" if tight else "primary_rtol"]
+    atol = fv_plan["tighter_atol" if tight else "primary_atol"]
+    path = fv_cache_path({"kind": "density", "protocol": label, "cutoff": [na, nb], "sign": sign, "rtol": rtol, "atol": atol})
+    if path.exists():
+        with np.load(path, allow_pickle=False) as data:
+            return {key: data[key] for key in data.files}
+    h, jumps, ops = fv_model(label, na, nb)
+    initial = dq.tensor(dq.coherent(na, sign*fv_alpha), dq.fock(nb, 0))
+    started = time.monotonic()
+    result = dq.mesolve(h, jumps, initial, jnp.asarray(fv_times), exp_ops=ops,
+        method=dq.method.Tsit5(rtol=rtol, atol=atol, max_steps=2_000_000), save_states=False)
+    e = np.asarray(result.expects)
+    rho = np.asarray(dq.to_numpy(result.final_state)).reshape(na*nb, na*nb)
+    output = {"e": e, "trace_error": np.asarray(abs(np.trace(rho)-1)),
+              "min_eigenvalue": np.asarray(np.linalg.eigvalsh((rho+rho.conj().T)/2).min()),
+              "hermiticity_error": np.asarray(np.max(abs(rho-rho.conj().T)))}
+    assert np.isfinite(e).all() and float(output["trace_error"]) < 1e-7
+    np.savez_compressed(path, **output)  # every setting is included in the cache identity
+    print(f"density: {label}, {na}x{nb}, bit {sign:+}, tight={tight}, {time.monotonic()-started:.1f}s", flush=True)
+    return output
+
+
+def fv_fit_rate(contrast, start):
+    boundaries = np.arange(fv_plan["cycles"]+1)*round(fv_period/fv_plan["record_bin_us"])
+    x, y = fv_times[boundaries][start:], np.log(contrast[boundaries][start:])
+    slope, intercept = np.polyfit(x, y, 1)
+    residual = y-(slope*x+intercept)
+    slope_se = np.sqrt(np.sum(residual**2)/(len(x)-2)/np.sum((x-x.mean())**2))
+    return float(-slope), float(slope_se), float(np.max(abs(residual)))
+
+
+def fv_run_protection():
+    rows = []
+    configurations = [(label, *fv_plan["protection_primary_cutoff"], False) for label in fv_plan["protocols"]]
+    configurations += [(label, *fv_plan["protection_larger_cutoff"], False) for label in ["joint", "joint idle"]]
+    configurations += [(label, *fv_plan["protection_primary_cutoff"], True) for label in ["joint", "joint idle"]]
+    for label, na, nb, tight in configurations:
+        runs = [fv_deterministic(label, na, nb, sign, tight) for sign in [1, -1]]
+        contrast = (runs[0]["e"][1].real-runs[1]["e"][1].real)/2  # cancels any common offset
+        fits = [fv_fit_rate(contrast, start) for start in fv_plan["fit_start_cycles"]]
+        plus, minus = runs[0]["e"][0], runs[1]["e"][0]
+        first = fv_times <= fv_period+1e-9
+        information = fv_kb*np.trapezoid((plus.real-minus.real)**2, fv_times)
+        damage = [1-0.5*(run["e"][5].real+sign*run["e"][1].real) for sign, run in zip([1, -1], runs)]
+        row = {"protocol": label, "na": na, "nb": nb, "tight": tight,
+            "rate": fits[0][0], "fit standard error": fits[0][1], "fit max log residual": fits[0][2],
+            "window change": max(abs(fit[0]-fits[0][0]) for fit in fits),
+            "first cycle information": float(fv_kb*np.trapezoid((plus.real[first]-minus.real[first])**2, fv_times[first])),
+            "total information": float(information), "first cycle worst damage": float(max(d[round(fv_period/fv_plan["record_bin_us"])] for d in damage)),
+            "final worst damage": float(max(d[-1] for d in damage)),
+            "max memory tail": float(max(run["e"][3].real.max() for run in runs)),
+            "max buffer tail": float(max(run["e"][4].real.max() for run in runs)),
+            "trace error": float(max(run["trace_error"] for run in runs)),
+            "min eigenvalue": float(min(run["min_eigenvalue"] for run in runs))}
+        rows.append(row)
+        pd.DataFrame(rows).to_csv(fv_folder/"final_validation_protection.csv", index=False)  # keep completed cases if interrupted
+        print("protection:", json.dumps(row), flush=True)
+    return pd.DataFrame(rows)
+
+
+def fv_templates(label, na, nb):
+    plus, minus = [fv_deterministic(label, na, nb, sign)["e"][0].real for sign in [1, -1]]
+    mu_plus, mu_minus = 2*np.sqrt(fv_kb)*plus, 2*np.sqrt(fv_kb)*minus
+    weight = ((mu_plus-mu_minus)[:-1]+(mu_plus-mu_minus)[1:])/2
+    midpoint = ((mu_plus+mu_minus)[:-1]+(mu_plus+mu_minus)[1:])/4
+    return weight, midpoint  # no noisy labels are used to train or tune this receiver
+
+
+def fv_record_batch(label, condition, sign, offset, count):
+    settings = fv_plan["sampling"][condition]
+    na, nb = settings["cutoff"]
+    dt = settings["dt_us"]
+    weight, midpoint = fv_templates(label, na, nb)
+    path = fv_cache_path({"kind": "records", "protocol": label, "condition": condition, "sign": sign, "offset": offset, "count": count, "kraus_normalized": True, "implementation": "precomputed-midpoint-v1"})
+    if path.exists():
+        with np.load(path, allow_pickle=False) as data:
+            return {key: data[key] for key in data.files}
+    started = time.monotonic()
+    record, final_kets = fv_precomputed_records(label, na, nb, sign, offset, count, settings)  # normalized Rouchon map
+    widths = np.diff(fv_times)
+    projections = []
+    for horizon in [fv_plan["secondary_horizon_us"], fv_plan["primary_horizon_us"]]:
+        mask = fv_times[1:] <= horizon+1e-9
+        normalization = np.sqrt(np.sum(weight[mask]**2*widths[mask]))
+        projections.append(((record[:, mask]-midpoint[mask])@(weight[mask]*widths[mask]))/normalization)
+    n_diagonal = np.repeat(np.arange(na), nb)
+    final_n = np.sum(abs(final_kets)**2*n_diagonal, axis=1).real
+    output = {"scores": np.stack(projections, axis=1), "final_n": final_n,
+              "record_sha256": np.asarray(hashlib.sha256(record.tobytes()).hexdigest())}
+    assert np.isfinite(output["scores"]).all() and np.isfinite(final_n).all()
+    np.savez_compressed(path, **output)  # retain frozen projections and raw-record hashes
+    print(f"records: {label}, {condition}, bit {sign:+}, {offset+count}/{settings['shots_per_bit']}, {time.monotonic()-started:.1f}s", flush=True)
+    return output
+
+
+def fv_wilson(errors, count, z=1.959963984540054):
+    p = errors/count
+    center = (p+z*z/(2*count))/(1+z*z/count)
+    half = z*np.sqrt(p*(1-p)/count+z*z/(4*count*count))/(1+z*z/count)
+    return float(center-half), float(center+half)
+
+
+def fv_run_receivers(conditions=None):
+    rows = []
+    for condition in (conditions or list(fv_plan["sampling"])):
+        settings = fv_plan["sampling"][condition]
+        for label in ["joint", "flat"]:
+            all_scores, signs, final_numbers, hashes = [], [], [], []
+            for sign in [1, -1]:
+                for offset in range(0, settings["shots_per_bit"], fv_numerics["execution_batch_size"]):
+                    count = min(fv_numerics["execution_batch_size"], settings["shots_per_bit"]-offset)
+                    batch = fv_record_batch(label, condition, sign, offset, count)
+                    all_scores.append(batch["scores"])
+                    signs.extend([sign]*count)
+                    final_numbers.extend(batch["final_n"])
+                    hashes.append(str(batch["record_sha256"]))
+            scores, signs = np.concatenate(all_scores), np.asarray(signs)
+            filename = "final_validation_scores_"+condition.replace(" ", "_")+"_"+label+".npz"
+            np.savez_compressed(fv_folder/filename, scores=scores, signs=signs, final_n=final_numbers, raw_record_hashes=hashes, plan_hash=fv_plan_hash)
+            for col, horizon in enumerate([fv_plan["secondary_horizon_us"], fv_plan["primary_horizon_us"]]):
+                errors = signs*scores[:, col] <= 0
+                low, high = fv_wilson(int(errors.sum()), len(errors))
+                expected_n = np.mean([fv_deterministic(label, *settings["cutoff"], s)["e"][2, -1].real for s in [1, -1]])
+                n_se = float(np.std(final_numbers, ddof=1)/np.sqrt(len(final_numbers)))
+                n_tolerance = max(fv_numerics["ensemble_photon_number_absolute_tolerance"], fv_numerics["ensemble_photon_number_standard_errors"]*n_se)
+                row = {"protocol": label, "condition": condition, "horizon us": horizon, "shots": len(errors),
+                       "errors": int(errors.sum()), "assignment error": float(errors.mean()), "95% low": low, "95% high": high,
+                       "plus errors": int(errors[signs == 1].sum()), "minus errors": int(errors[signs == -1].sum()),
+                       "accuracy threshold met": bool(high <= fv_plan["audit_thresholds"]["assignment_error_upper_95"]),
+                       "expected final n": float(expected_n), "ensemble difference": float(np.mean(final_numbers)-expected_n),
+                       "ensemble check passed": bool(abs(np.mean(final_numbers)-expected_n) <= n_tolerance),
+                       "mean final n": float(np.mean(final_numbers)), "final n standard error": float(np.std(final_numbers, ddof=1)/np.sqrt(len(final_numbers)))}
+                rows.append(row)
+            pd.DataFrame(rows).to_csv(fv_folder/"final_validation_receiver.csv", index=False)
+            print("receiver:", json.dumps(rows[-1]), flush=True)
+    return pd.DataFrame(rows)
+
+
+import scipy.linalg as fv_la  # precompute the state-independent Kraus normalization
+fv_sampler_cache = {}  # reuse the compiled sampler for the two stored-bit signs
+
+
+def fv_precomputed_bank(label, na, nb, dt, hstep):
+    path = fv_cache_path({"kind": "Kraus bank", "protocol": label, "cutoff": [na, nb], "dt": dt, "hstep": hstep})
+    if path.exists():
+        with np.load(path, allow_pickle=False) as saved:
+            return saved["normalizers"], saved["controls"]
+    h, jumps, _ = fv_model(label, na, nb)
+    base = np.asarray(dq.to_numpy(h(0.0)))
+    a, b = dq.destroy(na, nb)
+    memory = np.asarray(dq.to_numpy(a+a.dag()))
+    buffer = np.asarray(dq.to_numpy(b+b.dag()))
+    number_b = np.asarray(dq.to_numpy(b.dag()@b))
+    loss = sum(np.asarray(dq.to_numpy(jump.dag()@jump)) for jump in jumps)
+    spec = fv_plan["protocols"][label]
+    times = (np.arange(round(fv_period/hstep))+0.5)*hstep
+    u = np.mod(times, fv_period)
+    ramp = np.where(u < fv_duration, np.sin(np.pi*u/fv_duration)**2, 0.0)
+    if spec["kind"] == "flat":
+        edge = np.minimum(np.minimum(u, fv_duration-u)/0.02, 1.0)
+        z = np.where(u < fv_duration, spec["memory_peak_over_g2"]*fv_g*np.sin(np.pi*edge/2)**2, 0)
+    else:
+        z = spec["memory_scale"]*fv_plan["closed_peak"]*ramp*np.sum(
+            np.asarray(fv_plan["closed_coefficients"])[None, :]*np.cos(np.pi*u[:, None]/fv_duration*np.arange(len(fv_plan["closed_coefficients"]))), axis=1)
+    controls = np.stack([z, ramp], axis=1)
+    eye = np.eye(na*nb)
+    normalizers = np.empty((len(times), na*nb, na*nb), dtype=complex)
+    for i, (t, (z_i, r_i)) in enumerate(zip(times, controls)):
+        dense_h = base+z_i*memory-fv_g*fv_alpha**2*spec["buffer_fraction"]*r_i*buffer
+        dense_h = dense_h-spec["detuning_factor"]*fv_chi*fv_alpha**2*spec["buffer_fraction"]*r_i*number_b
+        if i in [0, len(times)//4, len(times)//2]:
+            assert np.max(abs(dense_h-np.asarray(dq.to_numpy(h(t))))) < 1e-10  # controls match the continuous model
+        m0 = eye-(1j*dense_h+0.5*loss)*dt
+        s = m0.conj().T@m0+loss*dt
+        chol = fv_la.cholesky(s, lower=True)
+        normalizers[i] = fv_la.solve_triangular(chol.conj().T, eye, lower=False)
+        if i in [0, len(times)//4, len(times)//2]:
+            assert np.max(abs(normalizers[i].conj().T@s@normalizers[i]-eye)) < 1e-12  # completeness, before state normalization
+    np.savez_compressed(path, normalizers=normalizers, controls=controls)
+    print(f"precomputed Kraus bank: {label}, {na}x{nb}, {len(times)} Hamiltonian bins", flush=True)
+    return normalizers, controls
+
+
+def fv_precomputed_records(label, na, nb, sign, offset, count, settings, check_only=False):
+    dt = settings["dt_us"]
+    hstep = fv_plan["record_bin_us"]*(0.5 if settings == fv_plan["sampling"]["half step"] else 1.0)
+    nsub = round(hstep/dt)
+    assert abs(nsub*dt-hstep) < 1e-12
+    bank, controls = fv_precomputed_bank(label, na, nb, dt, hstep)
+    bank, controls = jnp.asarray(bank), jnp.asarray(controls)
+    m, n = jnp.arange(na)[:, None], jnp.arange(nb)[None, :]
+    root_m, root_n = jnp.sqrt(jnp.arange(1, na)), jnp.sqrt(jnp.arange(1, nb))
+    pair = jnp.sqrt(jnp.arange(1, na-1)*jnp.arange(2, na))
+    loss = fv_ka*m+fv_kb*n+fv_phi*m*m
+    spec = fv_plan["protocols"][label]
+
+    def lower(psi):
+        a = jnp.pad(psi[:, 1:, :]*root_m[None, :, None], ((0, 0), (0, 1), (0, 0)))
+        b = jnp.pad(psi[:, :, 1:]*root_n[None, None, :], ((0, 0), (0, 0), (0, 1)))
+        return a, b
+
+    def h_action(psi, z, ramp):
+        a, b = lower(psi)
+        ad = jnp.pad(psi[:, :-1, :]*root_m[None, :, None], ((0, 0), (1, 0), (0, 0)))
+        bd = jnp.pad(psi[:, :, :-1]*root_n[None, None, :], ((0, 0), (0, 0), (1, 0)))
+        forward = jnp.pad(psi[:, 2:, :-1]*pair[None, :, None]*root_n[None, None, :], ((0, 0), (0, 2), (1, 0)))
+        backward = jnp.pad(psi[:, :-2, 1:]*pair[None, :, None]*root_n[None, None, :], ((0, 0), (2, 0), (0, 1)))
+        diagonal = fv_chi*m*n+fv_kerr*n*(n-1)/2-spec["detuning_factor"]*fv_chi*fv_alpha**2*(1+spec["buffer_fraction"]*ramp)*n
+        value = diagonal[None, :, :]*psi+fv_g*(forward+backward)+z*(a+ad)
+        value = value-fv_g*fv_alpha**2*(1+spec["buffer_fraction"]*ramp)*(b+bd)
+        return value
+
+    initial = np.asarray(dq.to_numpy(dq.tensor(dq.coherent(na, sign*fv_alpha), dq.fock(nb, 0)))).reshape(na, nb)
+    test = np.arange(na*nb).reshape(1, na, nb)*(1+0.2j)
+    t_test = hstep/2
+    h_full, step_jumps, _ = fv_model(label, na, nb)
+    dense_action = np.asarray(dq.to_numpy(h_full(t_test)))@test.ravel()
+    assert np.max(abs(np.asarray(h_action(jnp.asarray(test), *controls[0])).ravel()-dense_action)) < 1e-9  # check sparse actions
+    test_psi = jnp.asarray(test/np.linalg.norm(test))
+    test_x = (test_psi.reshape(1, -1)@bank[0].T).reshape(1, na, nb)
+    a_x, b_x = lower(test_x)
+    dy_test = np.array([0.01, -0.008, 0.02])  # arbitrary outcomes check the three-channel ordering
+    sparse_step = test_x-dt*(1j*h_action(test_x, *controls[0])+0.5*loss[None, :, :]*test_x)
+    sparse_step += np.sqrt(fv_kb)*b_x*dy_test[0]+np.sqrt(fv_ka)*a_x*dy_test[1]+np.sqrt(fv_phi)*m[None, :, :]*test_x*dy_test[2]
+    dense_jumps = [np.asarray(dq.to_numpy(jump)) for jump in step_jumps]
+    dense_loss = sum(jump.conj().T@jump for jump in dense_jumps)
+    dense_map = np.eye(na*nb)-(1j*np.asarray(dq.to_numpy(h_full(t_test)))+0.5*dense_loss)*dt
+    dense_map += sum(jump*dy for jump, dy in zip(dense_jumps, dy_test))
+    dense_step = dense_map@np.asarray(test_x).ravel()
+    assert np.max(abs(np.asarray(sparse_step).ravel()-dense_step)) < 1e-11  # agrees with the native normalized Rouchon update
+    m0_check = np.eye(na*nb)-(1j*np.asarray(dq.to_numpy(h_full(t_test)))+0.5*dense_loss)*dt
+    completeness = np.asarray(bank[0]).conj().T@(m0_check.conj().T@m0_check+dense_loss*dt)@np.asarray(bank[0])
+    assert np.max(abs(completeness-np.eye(na*nb))) < 1e-12  # also validate a loaded normalization bank
+    if check_only:
+        return None, None  # permits an independent one-step check without regenerating trajectories
+    keys = jax.vmap(lambda i: jax.random.fold_in(jax.random.fold_in(jax.random.key(settings["seed"]), int(sign < 0)), i))(
+        jnp.arange(offset, offset+count, dtype=jnp.uint32))
+
+    @jax.jit
+    def integrate(psi0, keys, bank, controls):
+        def block(psi, block_index):
+            phase_index = block_index % bank.shape[0]
+            normalizer = bank[phase_index]
+            z, ramp = controls[phase_index]
+
+            def step(i, carry):
+                psi, record = carry
+                a, b = lower(psi)
+                means = jnp.stack([2*jnp.real(jnp.sum(psi.conj()*np.sqrt(fv_kb)*b, axis=(1, 2))),
+                    2*jnp.real(jnp.sum(psi.conj()*np.sqrt(fv_ka)*a, axis=(1, 2))),
+                    2*jnp.real(jnp.sum(psi.conj()*np.sqrt(fv_phi)*m[None, :, :]*psi, axis=(1, 2)))], axis=1)
+                noise_keys = jax.vmap(lambda k: jax.random.fold_in(k, block_index*nsub+i))(keys)
+                noise = jax.vmap(lambda k: jax.random.normal(k, (3,), dtype=jnp.float64))(noise_keys)*np.sqrt(dt)
+                dy = means*dt+noise
+                x = (psi.reshape(count, -1)@normalizer.T).reshape(count, na, nb)
+                a_x, b_x = lower(x)
+                updated = x-dt*(1j*h_action(x, z, ramp)+0.5*loss[None, :, :]*x)
+                updated += np.sqrt(fv_kb)*b_x*dy[:, 0, None, None]+np.sqrt(fv_ka)*a_x*dy[:, 1, None, None]
+                updated += np.sqrt(fv_phi)*m[None, :, :]*x*dy[:, 2, None, None]
+                updated /= jnp.sqrt(jnp.sum(abs(updated)**2, axis=(1, 2)))[:, None, None]
+                return updated, record+dy[:, 0]
+
+            psi, record = jax.lax.fori_loop(0, nsub, step, (psi, jnp.zeros(count)))
+            return psi, record
+        return jax.lax.scan(block, psi0, jnp.arange(round(fv_plan["primary_horizon_us"]/hstep)))
+
+    cache_key = (label, na, nb, dt, hstep, count)
+    if cache_key not in fv_sampler_cache:
+        fv_sampler_cache[cache_key] = integrate
+    final, records = fv_sampler_cache[cache_key](jnp.broadcast_to(jnp.asarray(initial), (count, na, nb)), keys, bank, controls)
+    final, records = np.asarray(final).reshape(count, -1), np.asarray(records)
+    per_record = round(fv_plan["record_bin_us"]/hstep)
+    record = records.reshape(-1, per_record, count).sum(axis=1).T/fv_plan["record_bin_us"]
+    return record, final
+
+
+# %%
+from scipy.stats import beta  # exact bounds for sparse error/disagreement counts
+import matplotlib.pyplot as plt  # show accuracy and idle cost together
+from IPython.display import Markdown, display  # put claim decisions beside evidence
+
+
+def fv_exact_bounds(events, count, tail=0.0125):
+    low = 0.0 if events == 0 else float(beta.ppf(tail, events, count-events+1))
+    high = 1.0 if events == count else float(beta.ppf(1-tail, events+1, count-events))
+    return low, high  # two 97.5% intervals give a conservative 95% difference bound
+
+
+def fv_analyze():
+    protection = pd.read_csv(fv_folder/"final_validation_protection.csv")
+    receiver = pd.read_csv(fv_folder/"final_validation_receiver.csv")
+    primary = protection.query("na == 32 and nb == 8 and tight == False").set_index("protocol")
+    indicators = {}
+    for label in ["joint", "joint idle"]:
+        base = primary.loc[label]
+        alternatives = protection.query("protocol == @label")
+        indicators[label] = max(float(abs(alternatives["rate"]-base["rate"]).max()),
+            float(alternatives["window change"].max()), float(3*alternatives["fit standard error"].max()),
+            fv_plan["audit_thresholds"]["rate_absolute_numerical_floor_per_us"])
+    active, idle = float(primary.loc["joint", "rate"]), float(primary.loc["joint idle", "rate"])
+    active_err, idle_err = indicators["joint"], indicators["joint idle"]
+    idle_resolved = idle > 3*idle_err
+    lower = max(0.0, active-active_err)/(idle+idle_err)
+    upper = (active+active_err)/(idle-idle_err) if idle > idle_err else float("inf")
+    limit = fv_plan["audit_thresholds"]["maximum_active_over_idle_rate"]
+    status = "inconclusive" if not idle_resolved else ("supported" if upper <= limit else ("failed" if lower > limit else "inconclusive"))
+    ratio = {"active rate": active, "matched idle rate": idle, "active/idle": active/idle,
+        "active numerical indicator": active_err, "idle numerical indicator": idle_err,
+        "sensitivity lower ratio": lower, "sensitivity upper ratio": upper,
+        "threshold": limit, "idle resolved": bool(idle_resolved), "preservation test": status,
+        "strict original idle rate": float(primary.loc["original idle", "rate"]),
+        "note": "sensitivity bounds from cutoffs/tolerance/fit windows; not statistical confidence intervals"}
+    pd.DataFrame([ratio]).to_csv(fv_folder/"final_validation_idle_test.csv", index=False)
+
+    comparisons, convergence = [], []
+    for horizon, col in [(3.0, 0), (21.0, 1)]:
+        with np.load(fv_folder/"final_validation_scores_main_joint.npz", allow_pickle=False) as saved:
+            signs = saved["signs"]
+            new_errors = signs*saved["scores"][:, col] <= 0
+        with np.load(fv_folder/"final_validation_scores_main_flat.npz", allow_pickle=False) as saved:
+            assert np.array_equal(signs, saved["signs"])
+            old_errors = signs*saved["scores"][:, col] <= 0
+        worse, better = int(np.sum(new_errors & ~old_errors)), int(np.sum(old_errors & ~new_errors))
+        worse_bounds, better_bounds = fv_exact_bounds(worse, len(signs)), fv_exact_bounds(better, len(signs))
+        low, high = worse_bounds[0]-better_bounds[1], worse_bounds[1]-better_bounds[0]
+        comparisons.append({"horizon us": horizon, "paired shots": len(signs),
+            "joint minus flat error": float(new_errors.mean()-old_errors.mean()),
+            "paired 95% low": low, "paired 95% high": high,
+            "accuracy improvement resolved": bool(high < 0)})
+    pd.DataFrame(comparisons).to_csv(fv_folder/"final_validation_accuracy_comparison.csv", index=False)
+
+    for label in ["joint", "flat"]:
+        base = receiver[(receiver["protocol"] == label) & (receiver["condition"] == "main") & (receiver["horizon us"] == 21)].iloc[0]
+        base_bounds = fv_exact_bounds(int(base["errors"]), int(base["shots"]))
+        for condition in ["half step", "larger cutoff"]:
+            checked = receiver[(receiver["protocol"] == label) & (receiver["condition"] == condition) & (receiver["horizon us"] == 21)].iloc[0]
+            checked_bounds = fv_exact_bounds(int(checked["errors"]), int(checked["shots"]))
+            low, high = checked_bounds[0]-base_bounds[1], checked_bounds[1]-base_bounds[0]
+            margin = fv_plan["audit_thresholds"]["trajectory_equivalence_margin"]
+            convergence.append({"protocol": label, "check": condition,
+                "error difference": float(checked["assignment error"]-base["assignment error"]),
+                "95% low": low, "95% high": high, "margin": margin,
+                "equivalence supported": bool(low > -margin and high < margin)})
+    pd.DataFrame(convergence).to_csv(fv_folder/"final_validation_receiver_convergence.csv", index=False)
+    convergence_frame = pd.DataFrame(convergence)
+    joint = receiver[(receiver["protocol"] == "joint") & (receiver["condition"] == "main") & (receiver["horizon us"] == 21)].iloc[0]
+    reference = pd.read_csv(fv_folder/"pump_detuning_chi0p30_recalibrated_32_8.csv").query("condition == 'combined recalibrated'").iloc[0]
+    reference_information_error = abs(float(primary.loc["joint", "first cycle information"])-reference["information"])
+    reference_damage_error = abs(float(primary.loc["joint", "first cycle worst damage"])-reference["worst damage"])
+    summary = {"plan_sha256": fv_plan_hash, "software_versions": fv_versions,
+        "model": "chi/2pi = 0.30 MHz, buffer Kerr/2pi = 3.3 MHz, memory dephasing/2pi = 1 kHz, ideal detector",
+        "primary_horizon_us": 21.0, "shots": int(joint["shots"]), "assignment_errors": int(joint["errors"]),
+        "assignment_error": float(joint["assignment error"]),
+        "assignment_95_interval": [float(joint["95% low"]), float(joint["95% high"])],
+        "receiver_ensemble_checks_passed": bool(receiver["ensemble check passed"].all()),
+        "absolute_accuracy_threshold_met": bool(joint["accuracy threshold met"] and joint["ensemble check passed"]),
+        "joint_receiver_convergence_supported": bool(convergence_frame.query("protocol == 'joint'")["equivalence supported"].all() and receiver.query("protocol == 'joint'")["ensemble check passed"].all()),
+        "accuracy_improvement_vs_flat_resolved": comparisons[-1]["accuracy improvement resolved"],
+        "idle_protection": ratio,
+        "recomputed_first_cycle_information_difference": float(reference_information_error),
+        "recomputed_first_cycle_damage_difference": float(reference_damage_error),
+        "reference_endpoint_reproduced": bool(reference_information_error < 1e-6 and reference_damage_error < 1e-7)}
+    summary["both_requested_claims_supported"] = bool(summary["absolute_accuracy_threshold_met"] and
+        summary["joint_receiver_convergence_supported"] and status == "supported")
+    (fv_folder/"final_validation_summary.json").write_text(json.dumps(summary, indent=2)+"\n")
+    display(receiver)
+    display(pd.DataFrame([ratio]))
+    display(convergence_frame)
+    display(pd.DataFrame(comparisons))
+    text = (f"the final nonlinear joint pulse has {int(joint['errors'])}/{int(joint['shots'])} assignment errors "
+        f"after 21 μs: {100*joint['assignment error']:.2f}% "
+        f"(95% interval {100*joint['95% low']:.2f}–{100*joint['95% high']:.2f}%). "
+        f"ensemble photon-number sanity checks: {summary['receiver_ensemble_checks_passed']}. "
+        f"the absolute 5% accuracy test is {'met' if summary['absolute_accuracy_threshold_met'] else 'not met'}. "
+        f"the joint receiver's timestep/cutoff equivalence tests are "
+        f"{'supported' if summary['joint_receiver_convergence_supported'] else 'not all resolved'}. "
+        f"the total active/idle contrast-rate ratio is {active/idle:.3f}; "
+        f"the predeclared 10% preservation test is {status}. "
+        f"accuracy improvement over matched flat readout is "
+        f"{'resolved' if comparisons[-1]['accuracy improvement resolved'] else 'not statistically resolved'}. "
+        "these are separate claims, and reduced excess damage cannot substitute for an idle-rate test.")
+    display(Markdown(text))
+    (fv_folder/"final_validation_findings.md").write_text(text+"\n")
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    for label, offset, color in [("joint", -0.12, "#348a71"), ("flat", 0.12, "#c46b39")]:
+        rows = receiver.query("protocol == @label and condition == 'main'").sort_values("horizon us")
+        x = np.arange(len(rows))+offset
+        axes[0].errorbar(x, 100*rows["assignment error"],
+            yerr=[100*(rows["assignment error"]-rows["95% low"]), 100*(rows["95% high"]-rows["assignment error"])],
+            fmt="o", capsize=4, color=color, label=label)
+    axes[0].axhline(5, color="gray", ls=":", label="audit target: 5%")
+    axes[0].set(xticks=[0, 1], xticklabels=["3 μs", "21 μs"], ylabel="assignment error (%)", title="final pulse, nonlinear model")
+    axes[0].legend()
+    axes[1].errorbar([0], [active/idle], yerr=[[active/idle-lower], [upper-active/idle]], fmt="o", color="#348a71", capsize=5)
+    axes[1].axhline(1, color="gray", ls="--", label="idle rate")
+    axes[1].axhline(limit, color="#c46b39", ls=":", label="audit limit: 1.10")
+    axes[1].set(xticks=[0], xticklabels=["joint / matched idle"], ylabel="total contrast-rate ratio", title=f"preservation test: {status}")
+    axes[1].legend()
+    fig.tight_layout()
+    fig.savefig(fv_folder/"25_final_claim_audit.png", dpi=170, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+    return summary
+
+
+# %%
+final_validation_recompute = False  # true reruns this audit, with compatible checkpoints reused
+if final_validation_recompute:
+    print("frozen final audit plan:", fv_plan_hash)  # identify the controls and acceptance thresholds
+    fv_run_protection()  # active rates, corresponding idle rates, cutoff and tolerance checks
+    fv_run_receivers()  # independent final-pulse homodyne records and validation samples
+
+final_validation_result = fv_analyze()  # decide each claim from its own evidence
