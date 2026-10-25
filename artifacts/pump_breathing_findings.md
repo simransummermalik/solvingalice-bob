@@ -1,0 +1,1 @@
+with equal mean-signal information, the temporary buffer-drive ramp lowers final wrong-codeword plus leakage by 82.2% at 36×10. the nine-cycle logical contrast rate falls by 84.8% at 32×8, and the resonant-sine circuit test shows a 74.7% endpoint reduction. these are model results; single-shot receiver fidelity and hardware limits need separate tests.

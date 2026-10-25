@@ -1,0 +1,1 @@
+on the same 6144 closed-pulse records, full boxcar misreads 50.26%, drive-only boxcar 49.12%, sign-following 30.14%, and matched filtering 17.95%. these are paired exploratory comparisons of classical receivers, with uncertainty reported in the table. they reuse the existing physical simulations; the measured bit damage and the capstone limitation are unchanged.

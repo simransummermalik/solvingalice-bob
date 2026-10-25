@@ -2228,3 +2228,1059 @@ else:
     display(Markdown(findings))
     (artifacts / "audit_findings.md").write_text(findings+"\n")
     print("the earlier summary.json is retained; audit_summary.json records the added experiments and their software versions.")
+
+# %% [markdown]
+# different approaches, and what each one taught us
+#
+# this collects the methods already tested above, including the ones that did
+# not become the final choice. the receiver comparison further down is a new
+# analysis of saved noisy records; it does not rerun the quantum trajectories.
+#
+# | approach | question it answers | where to find the actual experiment |
+# |---|---|---|
+# | analytic one-mode solution | are units and basic loss implemented correctly? | 1.0a, figures 01–02 |
+# | effective one-mode stabilization | what happens if the buffer responds instantly? | 1.0c, figures 04–05 |
+# | full two-mode density matrix | what excitation and ringing does that approximation miss? | 1.1–1.2, figures 06–07 |
+# | independent cutoff sweeps | is the apparent improvement made by a small hilbert space? | cutoff_convergence.csv |
+# | coherent seeds of 0, 0.5, 1 and 1.5 | can symmetry breaking prepare one logical well? | 1.3, figure 09 |
+# | time-domain decay fits and slow generator eigenmodes | do two ways of extracting a rare error agree? | 2.1, bit_flip_rates.csv |
+# | constant-drive strength sweep | how does a stronger signal damage bit protection? | 2.4b, figure 13 |
+# | short pulse followed by passive listening | can the stored buffer motion provide the signal? | pulse_candidates.csv |
+# | resonant pulse | can we deliberately excite the useful ringing? | figures 14 and 16 |
+# | flat pulses with three durations | does a fairer, duration-tuned baseline change the result? | closed_training.csv |
+# | endpoint-constrained calculated pulse | can we emit information and reduce leftover motion? | 2.4 extension, figure 16 |
+# | extra frequency-derivative constraints | does sacrificing design freedom reduce frequency sensitivity? | closed_linear_endpoints.csv |
+# | quantum measurement trajectories | does the predicted signal survive noisy individual records? | figure 17 and the statistical addendum |
+# | repeated measurement of the same bit | does the disturbance accumulate? | figure 18 |
+#
+# these methods have different jobs. a fast approximate design model suggests
+# controls; the larger quantum calculation tests them. an eigenmode is a rate
+# check, not another readout pulse. none of these are extra hardware experiments.
+
+# %%
+from pathlib import Path  # this section also works directly after a kernel restart
+import os  # reuse the notebook's writable plotting cache
+os.environ.setdefault("MPLCONFIGDIR", str(Path.cwd() / ".cache" / "matplotlib"))
+import json  # keep the score dataset's provenance visible
+import hashlib  # check that the saved receiver scores match their manifest
+import numpy as np  # ordinary arrays are enough for this comparison
+import pandas as pd  # read the results already calculated above
+import matplotlib.pyplot as plt  # compare methods without running the physical model
+from scipy.stats import beta, norm  # exact paired bounds and binomial score intervals
+from IPython.display import display, Markdown  # small tables and plain explanations
+
+method_folder = Path("artifacts")  # open the notebook from the project folder
+method_training = pd.read_csv(method_folder / "closed_training.csv")  # same training cutoff, (24,6)
+method_screen = pd.read_csv(method_folder / "pulse_candidates.csv")  # earlier equal-peak screening
+method_endpoints = pd.read_csv(method_folder / "closed_linear_endpoints.csv")  # linear-design sensitivity
+print("first screening: same amplitude cap and observation time, different information; not an equal-information ranking")
+display(method_screen[["pulse", "matched information", "unweighted information", "wrong codeword", "residual leakage"]])
+print("duration and shape comparison: target information 0.79; all rows are the (24,6) training calculation")
+display(method_training)  # retain the infeasible short flat pulse and the unselected robust design
+method_training.to_csv(method_folder / "method_control_comparison.csv", index=False)  # portable comparison table
+
+# %% [markdown]
+# why keep the approaches that did not win?
+#
+# the short pulse is gentle partly because it emits less information. in the
+# first screen it reaches only about 0.24, compared with the later target of
+# 0.79. this does not prove that every possible short pulse would fail.
+# a 0.75 μs flat pulse cannot reach that target under the shared amplitude cap.
+# extending the flat drive to 2.25 μs lowers its wrong-codeword population but
+# leaves more leakage by the common 3 μs endpoint. this is why both are counted.
+#
+# the derivative-constrained pulse is a real alternative, not an assumed better
+# version. it suppresses leftover *linearized* motion under a frequency change,
+# but costs more peak amplitude and has more nominal quantum damage here.
+# it was not selected for the main larger-cutoff and noisy-readout comparisons.
+# the linear residual below is not a bit-flip probability or a hardware result.
+#
+# the two calculated pulses close the linear endpoint near numerical precision
+# at the nominal frequency. that does not imply exact quantum-state closure.
+# all six training rows are shown together; only the feasible rows approximately
+# match information. later held-out tests remain the evidence for the final pulse.
+
+# %%
+method_labels = ["flat\n0.75 μs", "flat\n1.5 μs", "flat\n2.25 μs", "resonant", "closed", "closed +\nderivative"]
+method_colors = ["#999999", "#d28a32", "#d28a32", "#3977a8", "#348a71", "#9468a4"]  # same families share a color
+fig, axes = plt.subplots(1, 3, figsize=(14, 4))  # all panels use the existing training results
+axes[0].bar(method_labels, method_training["information"] / 0.79, color=method_colors)
+axes[0].axhline(1, color="black", ls="--", lw=1)  # reaching the same target is a prerequisite
+axes[0].set(ylabel="mean-signal information / target", title="can the method reach the target?")
+damage_bars = axes[1].bar(method_labels, 1e4 * method_training["wrong + leakage"], color=method_colors)
+damage_bars[0].set_hatch("///")  # this candidate has lower information and is not a fair competitor
+axes[1].set(ylabel="wrong codeword + leakage (×10⁻⁴)", title="training damage, not readout error")
+method_offsets = [-0.16, 0.16]  # compare both constrained designs at each mistuning
+for offset, label, color in zip(method_offsets, ["closed nominal", "closed robust"], ["#348a71", "#9468a4"]):
+    subset = method_endpoints[(method_endpoints["pulse"] == label) & (method_endpoints["exchange factor"] != 1)].sort_values("exchange factor")
+    axes[2].bar(np.arange(2) + offset, subset["residual motion squared"], width=0.3, label=label, color=color)
+axes[2].set(xticks=np.arange(2), xticklabels=["−5% frequency", "+5% frequency"], yscale="log",
+            ylabel="linear endpoint residual squared", title="extra constraints help this objective")
+axes[2].legend(fontsize=8)
+for axis in axes[:2]:
+    axis.tick_params(axis="x", labelsize=8)  # readable labels without a huge figure
+fig.tight_layout()
+fig.savefig(method_folder / "20_control_methods.png", dpi=170, bbox_inches="tight")
+plt.show()  # embed the comparison in the notebook
+plt.close(fig)
+method_nominal = method_endpoints.query("pulse == 'closed nominal' and `exchange factor` != 1").sort_values("exchange factor")
+method_robust = method_endpoints.query("pulse == 'closed robust' and `exchange factor` != 1").sort_values("exchange factor")
+method_reductions = method_nominal["residual motion squared"].to_numpy() / method_robust["residual motion squared"].to_numpy()
+print(f"the derivative constraints reduce this linear residual by {method_reductions[0]:.1f}× and {method_reductions[1]:.1f}× at −5% and +5%.")
+print("the nominal quantum training score still favors the simpler closed design; robust frequency closure and minimum bit damage are different objectives.")
+
+# %% [markdown]
+# another choice: change the receiver, keeping the physical pulse fixed
+#
+# this tests four ways to process exactly the same records for each pulse:
+#
+# - full boxcar: integrate the measured quadrature for all 3 μs.
+# - drive-only boxcar: integrate only while the 1.5 μs drive is on.
+# - sign-following: flip the weight when the predicted signal changes sign,
+#   but do not try to reproduce its detailed amplitude.
+# - matched filter: weight by the full predicted time-dependent signal.
+#
+# all thresholds are zero. directions and weights come from the deterministic
+# positive-bit template, not from fitting the noisy labels. each weight has unit
+# integrated square; that rescales the score without changing its sign. a pulse
+# that changes sign can lose its useful signal inside a plain average.
+#
+# this is an exploratory ablation using the existing 6144 records per pulse,
+# not a newly collected validation set or an independent replication. we chose
+# these additional receiver rules after the earlier study; do not call this
+# preregistered. all four are reported rather than selecting a winner silently.
+# the saved score dataset contains four fixed projections per original record,
+# initial labels and weights. its manifest records the frozen controls, seeds,
+# software versions and hashes of the original trajectory batches. it permits
+# this small comparison to run without shipping every large raw checkpoint.
+# the projection formula and optional rebuild are included in the next cell.
+# leave the rebuild flag false for the fast saved-data comparison. rebuilding
+# needs the numerical model definitions and original trajectory checkpoints;
+# a missing checkpoint is reported, rather than launching a new simulation.
+#
+# the paired difference compares each receiver with the matched filter on the
+# same records. two exact 97.5% binomial intervals for the opposing disagreements
+# give a conservative 95% difference interval by the union bound. intervals are
+# individual comparisons; they are not simultaneous guarantees across the table.
+# no detector noise, efficiency loss or new measurement backaction is added here.
+
+# %%
+method_rebuild_scores = False  # saved projections are sufficient unless auditing their construction
+
+
+def method_project_records(records, times, positive_signal, duration):
+    widths = np.diff(times)  # measurement arrays contain bin-averaged currents
+    midpoint = (times[:-1] + times[1:]) / 2
+    signal = (positive_signal[:-1] + positive_signal[1:]) / 2  # same convention as the original filter
+    weights = np.stack([np.ones_like(midpoint), (midpoint < duration).astype(float), np.sign(signal), signal], axis=1)
+    orientation = np.where(np.sum(weights * signal[:, None] * widths[:, None], axis=0) >= 0, 1, -1)
+    weights *= orientation  # choose a positive expected score for the positive bit, without inspecting labels
+    weights /= np.sqrt(np.sum(weights**2 * widths[:, None], axis=0))  # positive rescaling leaves decisions unchanged
+    return records @ (weights * widths[:, None]), weights  # integrate currents, not just their sample values
+
+
+if method_rebuild_scores:
+    needed = ["selected_specs", "two_mode", "run_key", "extension_run", "dq", "kb", "alpha", "versions"]
+    if any(name not in globals() for name in needed):
+        raise RuntimeError("projection rebuild needs the numerical model setup; leave method_rebuild_scores = False to compare saved results directly")
+    method_payload = {"receiver_names": np.asarray(["full boxcar", "drive-only boxcar", "sign-following", "matched filter"])}
+    method_origin = {"description": "fixed linear receiver scores from existing quantum measurement records",
+                     "software_versions": versions, "pulses": {}, "threshold": 0,
+                     "units": "microseconds", "integration_dt": 0.0001,
+                     "sampling_note": "same 6144 records per pulse as audit_assignment_precision.csv; exploratory reuse, not new independent validation"}
+    for label in ["flat", "closed"]:
+        spec = selected_specs[label]
+        model_h, model_jumps, model_ops, model_a, model_b = two_mode(24, 6)
+        times = np.linspace(0, 3, 601)  # original record bins, not the stochastic integration step
+        batch_paths = []
+        for sign in [1, -1]:
+            initial = dq.tensor(dq.coherent(24, sign*alpha), dq.fock(6, 0))
+            for seed_base, count in [(20261024, 512), (40261025, 1024)]:
+                for repeat in range(2):
+                    seed = seed_base + 1000*(sign < 0) + repeat
+                    base = run_key(model_h, model_jumps, initial, times, [model_ops[0]], 0.0001, 0.0001)
+                    settings = {"pulse": spec, "seed": seed, "count": count, "dt": 0.0001,
+                                "method": "Rouchon1-ket-normalized-v1"}
+                    digest = hashlib.sha256((base.stem + json.dumps(settings, sort_keys=True)).encode()).hexdigest()
+                    path = base.with_name("records-" + digest + ".npz")
+                    if not path.is_file():
+                        raise FileNotFoundError(f"missing original trajectory checkpoint {path}; no new simulation was started")
+                    batch_paths.append((path, seed, count, sign))
+        template_base = run_key(model_h, model_jumps, dq.tensor(dq.coherent(24, alpha), dq.fock(6, 0)),
+                                times, model_ops, 2e-10, 2e-12)  # deterministic template uses the original tighter solver
+        template_digest = hashlib.sha256((template_base.stem + json.dumps(spec, sort_keys=True) + "closed-pulse-v1").encode()).hexdigest()
+        template_path = template_base.with_name(template_digest + ".npz")
+        if not template_path.is_file():
+            raise FileNotFoundError(f"missing deterministic template {template_path}; no new simulation was started")
+        with np.load(template_path, allow_pickle=False) as saved:
+            positive_signal = 2*np.sqrt(kb)*np.interp(times, saved["t"], saved["e"][3].real)
+        all_scores, all_signs, sources = [], [], []
+        for path, seed, count, sign in batch_paths:
+            with np.load(path, allow_pickle=False) as saved:
+                if not np.array_equal(saved["t"], times):
+                    raise ValueError("trajectory grid differs from the recorded binning")
+                scores, weights = method_project_records(saved["records"], times, positive_signal, spec["duration"])
+            all_scores.append(scores)
+            all_signs.extend([sign]*count)  # labels are stored for evaluation, not used to set weights
+            sources.append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                            "seed": seed, "count": count, "initial_sign": sign})
+        method_payload[label + "_scores"] = np.concatenate(all_scores)
+        method_payload[label + "_signs"] = np.asarray(all_signs)
+        method_payload[label + "_times"] = times
+        method_payload[label + "_weights"] = weights
+        method_origin["pulses"][label] = {"control": spec, "batches": sources}
+    method_output = method_folder / "method_receiver_scores.npz"
+    np.savez_compressed(method_output, **method_payload)  # all original checkpoints remain unchanged
+    method_origin["scores_sha256"] = hashlib.sha256(method_output.read_bytes()).hexdigest()
+    (method_folder / "method_receiver_provenance.json").write_text(json.dumps(method_origin, indent=2) + "\n")
+
+method_manifest = json.loads((method_folder / "method_receiver_provenance.json").read_text())  # original batch identities
+method_score_path = method_folder / "method_receiver_scores.npz"
+if hashlib.sha256(method_score_path.read_bytes()).hexdigest() != method_manifest["scores_sha256"]:
+    raise ValueError("receiver score dataset differs from its provenance manifest")  # stop on changed inputs
+
+
+def method_wilson(errors, count):
+    z = norm.ppf(0.975)  # individual two-sided 95% binomial interval
+    fraction = errors / count
+    center = (fraction + z*z/(2*count)) / (1 + z*z/count)
+    half = z*np.sqrt(fraction*(1-fraction)/count + z*z/(4*count*count)) / (1 + z*z/count)
+    return float(center-half), float(center+half)
+
+
+def method_paired_bounds(differences):
+    count = len(differences)  # each observation is one record processed in two ways
+    bounds = []
+    for direction in [1, -1]:
+        events = int(np.count_nonzero(differences == direction))  # opposite directions can cancel in the mean
+        low = 0.0 if events == 0 else beta.ppf(0.0125, events, count-events+1)
+        high = 1.0 if events == count else beta.ppf(0.9875, events+1, count-events)
+        bounds.append((low, high))  # zero disagreements still have nonzero uncertainty
+    return float(bounds[0][0]-bounds[1][1]), float(bounds[0][1]-bounds[1][0])
+
+
+method_reference = pd.read_csv(method_folder / "audit_assignment_precision.csv").set_index("pulse")
+method_receiver_rows = []
+with np.load(method_score_path, allow_pickle=False) as method_data:
+    method_receiver_names = method_data["receiver_names"].tolist()
+    method_receiver_weights = {label: method_data[label + "_weights"].copy() for label in ["flat", "closed"]}
+    method_receiver_times = method_data["closed_times"].copy()
+    for label in ["flat", "closed"]:
+        scores = method_data[label + "_scores"]  # rows stay paired across receivers
+        signs = method_data[label + "_signs"]  # the initially stored bit is the correct answer
+        if scores.shape != (len(signs), 4) or not np.isfinite(scores).all():
+            raise ValueError("invalid receiver score array")
+        errors = signs[:, None] * scores <= 0  # the classifier uses only a zero threshold, never the label
+        if len(signs) != int(method_reference.loc[label, "shots"]) or int(errors[:, -1].sum()) != int(method_reference.loc[label, "errors"]):
+            raise ValueError("matched-filter reference does not reproduce the earlier trajectory results")
+        for column, receiver in enumerate(method_receiver_names):
+            count = len(signs)
+            wrong = int(errors[:, column].sum())
+            low, high = method_wilson(wrong, count)
+            difference = errors[:, column].astype(int) - errors[:, -1].astype(int)
+            paired_low, paired_high = method_paired_bounds(difference)
+            method_receiver_rows.append({"pulse": label, "receiver": receiver, "shots": count, "errors": wrong,
+                                         "assignment error": wrong/count, "95% low": low, "95% high": high,
+                                         "difference from matched": float(difference.mean()),
+                                         "paired 95% low": paired_low, "paired 95% high": paired_high})
+method_receivers = pd.DataFrame(method_receiver_rows)
+display(method_receivers)  # full results, including unsuccessful receivers
+method_receivers.to_csv(method_folder / "method_receiver_comparison.csv", index=False)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+method_positions = np.arange(len(method_receiver_names))
+for offset, label, color in [(-0.10, "flat", "#d28a32"), (0.10, "closed", "#348a71")]:
+    subset = method_receivers[method_receivers["pulse"] == label]
+    estimate = subset["assignment error"].to_numpy()
+    error_bars = np.vstack([estimate-subset["95% low"].to_numpy(), subset["95% high"].to_numpy()-estimate])
+    axes[0].errorbar(method_positions+offset, 100*estimate, yerr=100*error_bars, fmt="o", capsize=3, label=label, color=color)
+axes[0].set(xticks=method_positions, xticklabels=["full\nboxcar", "drive-only\nboxcar", "sign-\nfollowing", "matched\nfilter"],
+            ylabel="assignment error (%)", title="same noisy records, different receiver")
+axes[0].axhline(50, color="gray", ls=":", lw=1)  # balanced random guessing for context
+axes[0].legend()
+method_midpoints = (method_receiver_times[:-1] + method_receiver_times[1:]) / 2
+for column, receiver in enumerate(method_receiver_names):
+    axes[1].plot(method_midpoints, method_receiver_weights["closed"][:, column], label=receiver, lw=1)
+axes[1].set(xlabel="time (μs)", ylabel="normalized receiver weight", title="weights for the closed pulse")
+axes[1].legend(fontsize=8)
+fig.tight_layout()
+fig.savefig(method_folder / "21_receiver_methods.png", dpi=170, bbox_inches="tight")
+plt.show()
+plt.close(fig)
+
+# %% [markdown]
+# what the extra methods do, and do not, change
+#
+# the control comparison exposes the cost of each constraint, including the
+# methods that miss the information target. the receiver experiment isolates
+# classical processing: changing a filter does not alter the physical state
+# disturbance caused by an already completed measurement. its short-record
+# error rates should not be confused with the separate 21 μs experiment.
+#
+# the main idea remains using the underdamped signal while controlling residual
+# motion. the extra frequency constraints and simpler sign-following receiver
+# are alternatives with different costs, not automatically improvements. the
+# earlier limitation also remains: the tested readout does not preserve the
+# idle bit-flip protection, and no hardware or originality claim follows.
+
+# %%
+method_closed = method_receivers[method_receivers["pulse"] == "closed"].set_index("receiver")
+method_text = (
+    f"on the same 6144 closed-pulse records, full boxcar misreads {100*method_closed.loc['full boxcar', 'assignment error']:.2f}%, "
+    f"drive-only boxcar {100*method_closed.loc['drive-only boxcar', 'assignment error']:.2f}%, "
+    f"sign-following {100*method_closed.loc['sign-following', 'assignment error']:.2f}%, "
+    f"and matched filtering {100*method_closed.loc['matched filter', 'assignment error']:.2f}%. "
+    "these are paired exploratory comparisons of classical receivers, with uncertainty reported in the table. "
+    "they reuse the existing physical simulations; the measured bit damage and the capstone limitation are unchanged."
+)
+display(Markdown(method_text))  # let the actual numbers decide the lesson
+(method_folder / "method_findings.md").write_text(method_text + "\n")
+
+# %% [markdown]
+# phase locking under readout: a new diagnostic
+#
+# the recent two-mode cat-qubit analysis describes a reflection-symmetric,
+# phase-locked manifold using `Y_a = 0` for the memory and `X_b = 0` for the
+# buffer. this gives us a useful question for the readout problem: does the
+# readout pulse merely make a temporary excursion, or does it actually push
+# the system through a transverse stability boundary?
+#
+# i measure the transverse coordinates `(Y_a, X_b) = (im<a>, re<b>)`, the area
+# of that excursion, and the local transverse eigenvalue gap. this is more
+# informative than only plotting the buffer signal because it tests whether
+# the readout is still inside the phase-locked geometry.
+#
+# this is a hypothesis test, not a claim that a new phase transition has been
+# discovered. the nominal model has no Kerr or cross-Kerr correction, so a
+# negative result here tells us exactly what extra physics would be needed
+# before making a stronger claim.
+
+# %%
+import json  # the saved phase-plane traces are a small json file
+from pathlib import Path  # lets this section run after a kernel restart
+
+import matplotlib.pyplot as plt  # the diagnostic has one compact figure
+import pandas as pd  # the saved sweep is easier to inspect as a table
+from IPython.display import Markdown, display  # keep the conclusion readable in the notebook
+
+phase_lock_load_saved = True  # the saved sweep makes this section quick after a restart
+phase_lock_folder = Path("artifacts")  # keep the diagnostic beside the other audit tables
+phase_lock_pulses = pd.read_csv(phase_lock_folder / "phase_locking_pulses.csv")  # nominal pulse comparison
+phase_lock_sweep = pd.read_csv(phase_lock_folder / "phase_locking_amplitude_sweep.csv")  # strength sweep
+phase_lock_traces = json.loads((phase_lock_folder / "phase_locking_traces.json").read_text())  # phase-plane paths
+
+if not phase_lock_load_saved:
+    raise RuntimeError("the saved phase-locking sweep is the reproducible default; rerun the export helper first")
+
+display(phase_lock_pulses.round(6))  # the three pulse shapes at the matched information point
+display(phase_lock_sweep.round(6))  # increasing strength tests for a stability boundary
+
+fig, axes = plt.subplots(1, 3, figsize=(16, 4))  # one panel for the sweep and two for the geometry
+axes[0].plot(phase_lock_sweep["peak factor"], phase_lock_sweep["information"], "o-", color="#348a71")
+axes[0].set(xlabel="closed-pulse peak / nominal peak", ylabel="information", title="readout strength")
+axes[0].axhline(0.79, color="gray", ls=":", lw=1)  # the matched-information target for context
+axes[1].plot(phase_lock_sweep["peak factor"], phase_lock_sweep["transverse loop area"], "o-", color="#c46b39", label="loop area")
+gap_axis = axes[1].twinx()  # the gap is much larger numerically, so it gets its own scale
+gap_axis.plot(phase_lock_sweep["peak factor"], phase_lock_sweep["minimum transverse gap per us"], "s--", color="#3f6fa0", label="gap per μs")
+axes[1].set(xlabel="closed-pulse peak / nominal peak", ylabel="transverse loop area", title="motion versus local stability")
+gap_axis.set_ylabel("minimum transverse gap per μs", color="#3f6fa0")
+gap_axis.tick_params(axis="y", labelcolor="#3f6fa0")
+left_lines, left_labels = axes[1].get_legend_handles_labels()  # combine both y axes in one legend
+right_lines, right_labels = gap_axis.get_legend_handles_labels()
+axes[1].legend(left_lines + right_lines, left_labels + right_labels, fontsize=8, loc="upper left")
+for label, color in [("flat", "#d28a32"), ("resonant", "#7a65a3"), ("closed", "#348a71")]:
+    trace = phase_lock_traces[label]  # each curve is a path in the two transverse coordinates
+    axes[2].plot(trace["ya"], trace["xb"], color=color, label=label)
+axes[2].scatter([0], [0], color="black", s=18, zorder=3)  # ideal phase-locked point
+axes[2].set(xlabel="Y_a = Im(<a>)", ylabel="X_b = Re(<b>)", title="transverse excursion")
+axes[2].legend()
+fig.tight_layout()
+fig.savefig(phase_lock_folder / "22_phase_locking_readout.png", dpi=170, bbox_inches="tight")
+plt.show()
+plt.close(fig)
+
+# %% [markdown]
+# what this phase-locking test says
+#
+# the nominal flat, resonant, and closed pulses all remain locally stable in
+# the ideal model: every trajectory has zero unstable samples and the minimum
+# transverse gap stays about 20 per microsecond. the closed pulse therefore
+# does not earn a claim of phase-locking protection just because its residual
+# ring-down is shaped.
+#
+# the more interesting observation is geometric. at matched information, the
+# closed pulse makes a much larger transverse loop than the flat pulse, but a
+# slightly smaller loop than the resonant pulse. increasing the closed-pulse
+# peak makes the loop grow smoothly while the gap changes only slightly; no
+# sharp boundary appears from 0.25x through 2x in this ideal model.
+#
+# this is a useful negative result: the missing ingredient for a real
+# breakdown experiment is not another receiver filter. it is a controlled
+# non-adiabatic or circuit-corrected model in which the transverse Jacobian
+# can actually change sign. the notebook keeps the diagnostic because it
+# tells us what to test next and prevents us from calling ordinary ringing a
+# phase transition.
+
+# %%
+phase_lock_nominal = phase_lock_pulses.set_index("pulse")  # easier names for the short report below
+phase_lock_max_unstable = int(phase_lock_sweep["unstable samples"].max())  # zero means no sampled instability
+phase_lock_min_gap = float(phase_lock_sweep["minimum transverse gap per us"].min())
+phase_lock_closed_area = float(phase_lock_nominal.loc["closed", "transverse loop area"])
+phase_lock_flat_area = float(phase_lock_nominal.loc["flat", "transverse loop area"])
+phase_lock_resonant_area = float(phase_lock_nominal.loc["resonant", "transverse loop area"])
+phase_lock_text = (
+    f"phase-locking audit: the nominal closed pulse has transverse loop area {phase_lock_closed_area:.6f}, "
+    f"between flat ({phase_lock_flat_area:.6f}) and resonant ({phase_lock_resonant_area:.6f}). "
+    f"the strength sweep found {phase_lock_max_unstable} unstable samples and a smallest local gap of "
+    f"{phase_lock_min_gap:.6f} per microsecond over 0.25x–2x peak strength. "
+    "there is no resolved phase-locking breakdown in the ideal two-mode model; this is a diagnostic and a "
+    "negative result, not a claim of a new phase transition."
+)
+display(Markdown(phase_lock_text))  # print the conclusion beside the plots so it cannot get separated
+(phase_lock_folder / "phase_locking_findings.md").write_text(phase_lock_text + "\n")  # keep a plain-text record too
+
+# %% [markdown]
+# a second knob for the readout: let the cat expand, then bring it home
+#
+# the memory pulse gets the bit into the outgoing buffer field. the buffer
+# stabilization drive fixes the cat size through `alpha² = epsilon_d/g2` in
+# the steady-state picture. what if i increase that *buffer drive* for only
+# the 1.5 μs memory pulse, and then return it smoothly to the original value?
+# the ats flux pump and `g2` stay fixed. this is a temporary cat-size change,
+# not a different logical encoding for the final comparison.
+#
+# the added term is `-0.45 epsilon_d sin²(pi t / 1.5) (b+b†)` during the
+# pulse. the memory drive is recalibrated to keep the same measured buffer
+# contrast, and its peak stays below the original `0.5 g2` design cap.
+# both input bits are simulated so a common buffer displacement cannot count
+# as information. i compare final damage in the original `|±alpha>` code.
+#
+# the idea combines known ingredients, not a verified first discovery:
+# [two-mode buffer control](https://doi.org/10.1103/PRXQuantum.4.040316)
+# and [the role of finite-buffer dynamics](https://arxiv.org/abs/2605.24100).
+# this exact readout schedule is a challenge-specific proposal. its value has
+# to come from the matched calculations below, not from calling it novel.
+
+# %%
+import json  # store the exact control settings with the comparison
+from pathlib import Path  # saved tables make a quick restart possible
+import numpy as np  # finite-time integrals and codeword projections
+import pandas as pd  # show all cutoffs together
+import matplotlib.pyplot as plt  # make a compact results figure
+from IPython.display import Markdown, display  # keep the result next to its caveats
+
+breath_folder = Path("artifacts")  # same destination as the earlier numerical checks
+breath_recompute = False  # true reruns the two-mode model if the earlier model cells were executed
+breath_fraction = 0.45  # at the pulse midpoint, epsilon_d is 45% above idle
+breath_duration = 1.5  # the buffer drive returns to idle before the 3 μs endpoint
+
+
+def breath_run(na, nb, fraction, drive_scale, sign, corrected=False):
+    h, jumps, ops, a, b = two_mode(na, nb)  # this definition is in the earlier notebook cells
+    if corrected:
+        exchange, _ = sine_exchange(na, nb, calibrate=True)  # number-dependent resonant circuit correction
+        h = exchange - g2*alpha**2*(b+b.dag())  # preserve the calibrated idle buffer drive
+    spec = selected_specs["closed"]  # exactly the earlier selected memory waveform
+    envelope = extension_waveform(spec)  # one fixed shape, only its height is recalibrated
+
+    def buffer_extra(t):
+        inside = (t >= 0) & (t < breath_duration)  # no change during passive listening
+        ramp = jnp.sin(jnp.pi*t/breath_duration)**2  # both endpoints are smooth
+        return jnp.where(inside, -g2*alpha**2*fraction*ramp, 0.0)
+
+    driven = h + dq.modulated(lambda t: drive_scale*envelope(t), a+a.dag(), discontinuity_ts=[breath_duration])
+    driven = driven + dq.modulated(buffer_extra, b+b.dag(), discontinuity_ts=[breath_duration])
+    times = np.linspace(0, 3, 601)  # identical recording horizon to the selected pulse
+    initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))  # the same stored bit
+    run = evolve(driven, jumps, initial, times, ops, (na, nb), rtol=2e-10, atol=2e-12)
+    even = np.asarray(dq.to_numpy(cat_ket(na, alpha, 1))).ravel()  # original code at the end
+    odd = np.asarray(dq.to_numpy(cat_ket(na, alpha, -1))).ravel()
+    wrong = (even-sign*odd)/np.sqrt(2)  # the orthogonal wrong logical codeword
+    final_memory = run["rho"][-1]  # the buffer is already traced out
+    wrong_probability = np.einsum("i,ij,j->", wrong.conj(), final_memory, wrong).real
+    code_probability = sum(np.einsum("i,ij,j->", cat.conj(), final_memory, cat).real for cat in [even, odd])
+    return run, {"wrong": float(wrong_probability), "leakage": float(1-code_probability),
+                 "memory tail max": float(run["e"][5].real.max()),
+                 "buffer tail max": float(run["e"][6].real.max())}
+
+
+def breath_compare(na, nb, fraction, drive_scale, corrected=False):
+    plus, plus_result = breath_run(na, nb, fraction, drive_scale, +1, corrected)  # prepared in +alpha
+    minus, minus_result = breath_run(na, nb, fraction, drive_scale, -1, corrected)  # prepared in -alpha
+    difference = (plus["e"][3].real-minus["e"][3].real)/2  # subtract any common buffer response
+    information = float(4*kb*np.trapezoid(difference**2, plus["t"]))  # same ideal mean-signal metric
+    damages = [result["wrong"]+result["leakage"] for result in [plus_result, minus_result]]
+    return {"pump fraction": fraction, "drive scale": drive_scale, "information": information,
+            "worst damage": float(max(damages)), "mean damage": float(np.mean(damages)),
+            "memory tail max": max(plus_result["memory tail max"], minus_result["memory tail max"]),
+            "buffer tail max": max(plus_result["buffer tail max"], minus_result["buffer tail max"]),
+            "mean buffer offset max": float(np.max(np.abs((plus["e"][3].real+minus["e"][3].real)/2)))}
+
+
+if breath_recompute:
+    requirements = ["two_mode", "sine_exchange", "selected_specs", "extension_waveform", "evolve", "dq", "jnp", "cat_ket", "g2", "kb", "alpha"]
+    if any(name not in globals() for name in requirements):
+        raise RuntimeError("run the earlier model cells before asking for new Lindblad solves")
+    unscaled = [breath_compare(24, 6, fraction, 1.0) for fraction in [0.0, 0.15, 0.30, 0.45]]
+    pd.DataFrame(unscaled).to_csv(breath_folder / "pump_assisted_exploratory.csv", index=False)
+    for filename, cutoff, scale, corrected in [
+        ("pump_assisted_matched_exploratory.csv", (24, 6), 1.111, False),
+        ("pump_assisted_cutoff_exploratory.csv", (32, 8), 1.111, False),
+        ("pump_assisted_cutoff_36_10_exploratory.csv", (36, 10), 1.111, False),
+        ("pump_assisted_circuit_32_8_exploratory.csv", (32, 8), 1.137, True),
+    ]:
+        row = breath_compare(*cutoff, breath_fraction, scale, corrected)  # full model, both stored bits
+        pd.DataFrame([row]).to_csv(breath_folder / filename, index=False)
+
+breath_exploratory = pd.read_csv(breath_folder / "pump_assisted_exploratory.csv")
+breath_files = ["pump_assisted_matched_exploratory.csv", "pump_assisted_cutoff_exploratory.csv",
+                "pump_assisted_cutoff_36_10_exploratory.csv", "pump_assisted_circuit_32_8_exploratory.csv"]
+breath_candidates = [pd.read_csv(breath_folder / name).query("`pump fraction` == @breath_fraction").iloc[0]
+                     for name in breath_files]  # select the declared 45% ramp in every file
+breath_baseline = pd.read_csv(breath_folder / "closed_validation.csv")  # original ideal cutoff checks
+breath_circuit = pd.read_csv(breath_folder / "audit_equal_information_circuit.csv")  # original circuit check
+breath_training = pd.read_csv(breath_folder / "closed_training.csv")  # saved peak of the selected memory pulse
+breath_peak_ratio = float(breath_training.query("pulse == 'closed nominal 1.5 us'")["peak/g2"].iloc[0])
+breath_rows = []
+for model, na, nb, candidate in [("ideal", 24, 6, breath_candidates[0]),
+                                 ("ideal", 32, 8, breath_candidates[1]),
+                                 ("ideal", 36, 10, breath_candidates[2]),
+                                 ("resonant sine", 32, 8, breath_candidates[3])]:
+    if model == "ideal":
+        baseline = breath_baseline.query("pulse == 'closed' and na == @na and nb == @nb").iloc[0]
+    else:
+        baseline = breath_circuit.query("condition == 'resonant sine' and pulse == 'closed'").iloc[0]
+    breath_rows.append({"model": model, "na": na, "nb": nb, "baseline information": float(baseline["information"]),
+                        "breathing information": float(candidate["information"]),
+                        "baseline damage": float(baseline["wrong + leakage"]),
+                        "breathing damage": float(candidate["worst damage"]),
+                        "damage reduction %": float(100*(1-candidate["worst damage"]/baseline["wrong + leakage"])),
+                        "memory peak/g2": float(breath_peak_ratio*candidate["drive scale"]),
+                        "memory tail max": float(candidate["memory tail max"]),
+                        "buffer tail max": float(candidate["buffer tail max"])})
+breath_matched = pd.DataFrame(breath_rows)  # each row compares the same model and cutoff
+display(breath_exploratory.round(7))  # no hidden cherry-picking of the initial amplitude scan
+display(breath_matched.round(7))  # the headline comparison includes all cutoff checks
+breath_matched.to_csv(breath_folder / "pump_breathing_comparison.csv", index=False)
+
+# %% [markdown]
+# does it survive using the same memory repeatedly?
+#
+# i repeat the *whole* 3 μs cycle, including the 1.5 μs buffer-drive ramp and
+# 1.5 μs listening window. the initial bit is prepared only once, and the buffer
+# is never manually reset. the rate comes from a log fit to the logical contrast
+# at cycle endpoints 2 through 9, exactly as for the earlier baseline.
+#
+# the old phase-locking figure uses the magnitude of complex Jacobian
+# eigenvalues for its gap. that magnitude is not the decay rate: the real
+# parts decide whether a perturbation grows. its zero-unstable-samples result
+# remains a local diagnostic, not an explanation of the improvement here.
+
+# %%
+breath_recompute_cycles = False  # leave false for quick display of the saved 9-cycle runs
+
+
+def breath_cycle_run(na, nb, cycles=9):
+    spec = selected_specs["closed"]  # the same pulse as above, repeated without reset
+    h, jumps, ops, a, b = two_mode(na, nb)
+    even, odd = cat_ket(na, alpha, 1), cat_ket(na, alpha, -1)
+    zero, one = (even+odd)/np.sqrt(2), (even-odd)/np.sqrt(2)  # orthogonal logical states
+    logical_z = dq.tensor(dq.todm(zero)-dq.todm(one), dq.eye(nb))  # stored-bit contrast
+    initial = dq.tensor(zero, dq.fock(nb, 0))  # exactly one preparation before all nine cycles
+    envelope = extension_waveform(spec)
+
+    def readout(t):
+        return 1.111*envelope(jnp.mod(t, 3.0))  # same matched memory drive in each cycle
+
+    def buffer_extra(t):
+        phase = jnp.mod(t, 3.0)  # local clock resets the control, not the quantum state
+        inside = (phase >= 0) & (phase < breath_duration)
+        ramp = jnp.sin(jnp.pi*phase/breath_duration)**2
+        return jnp.where(inside, -g2*alpha**2*breath_fraction*ramp, 0.0)
+
+    driven = h + dq.modulated(readout, a+a.dag()) + dq.modulated(buffer_extra, b+b.dag())
+    times = np.linspace(0, 3*cycles, 120*cycles+1)
+    result = dq.mesolve(driven, jumps, initial, jnp.asarray(times), exp_ops=[logical_z, *ops],
+                       method=dq.method.Tsit5(rtol=2e-10, atol=2e-12, max_steps=2_000_000), save_states=False)
+    expectation = np.asarray(result.expects)  # no full two-mode density matrix needs to be stored
+    endpoints = np.arange(0, len(times), 120)
+    contrast = expectation[0, endpoints].real
+    rate = float(-np.polyfit(times[endpoints][2:], np.log(contrast[2:]), 1)[0])
+    return pd.DataFrame({"na": na, "nb": nb, "cycle": endpoints//120, "time": times[endpoints],
+                         "contrast": contrast, "memory tail": expectation[6, endpoints].real,
+                         "buffer tail": expectation[7, endpoints].real, "bit decay rate": rate})
+
+
+if breath_recompute_cycles:
+    if any(name not in globals() for name in ["two_mode", "selected_specs", "dq", "jnp", "g2", "alpha"]):
+        raise RuntimeError("run the earlier model cells before repeating the Lindblad calculation")
+    for na, nb in [(24, 6), (32, 8), (36, 10)]:
+        breath_cycle_run(na, nb).to_csv(breath_folder / f"pump_assisted_cycles_{na}_{nb}.csv", index=False)
+
+breath_cycles = {cutoff: pd.read_csv(breath_folder / f"pump_assisted_cycles_{cutoff[0]}_{cutoff[1]}.csv")
+                 for cutoff in [(24, 6), (32, 8), (36, 10)]}  # check convergence of the repeated-cycle rate
+breath_old_cycles = pd.read_csv(breath_folder / "audit_repeated_cycle_rates.csv")
+breath_cycle_rows = []
+for na, nb in [(24, 6), (32, 8), (36, 10)]:
+    new = breath_cycles[(na, nb)]
+    old_rows = breath_old_cycles.query("pulse == 'closed' and na == @na and nb == @nb")
+    old_rate = float(old_rows["rate"].iloc[0]) if len(old_rows) else np.nan  # baseline 36×10 was not simulated
+    new_rate = float(new["bit decay rate"].iloc[0])
+    breath_cycle_rows.append({"na": na, "nb": nb, "baseline rate per us": old_rate,
+                              "breathing rate per us": new_rate,
+                              "rate reduction %": float(100*(1-new_rate/old_rate)) if np.isfinite(old_rate) else np.nan})
+breath_cycle_table = pd.DataFrame(breath_cycle_rows)
+display(breath_cycle_table.round(8))
+breath_cycle_table.to_csv(breath_folder / "pump_breathing_cycle_rates.csv", index=False)
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))  # signal, final damage, and repeated-bit protection
+axes[0].plot(breath_exploratory["pump fraction"], breath_exploratory["information"], "o-", label="original memory drive")
+axes[0].axhline(0.79, color="gray", ls=":", label="common target")
+axes[0].set(xlabel="extra buffer drive / idle buffer drive", ylabel="mean-signal information", title="first check")
+axes[0].legend(fontsize=8)
+positions = np.arange(len(breath_matched))
+axes[1].bar(positions-0.18, 1e4*breath_matched["baseline damage"], width=0.36, label="original closed")
+axes[1].bar(positions+0.18, 1e4*breath_matched["breathing damage"], width=0.36, label="cat breathing")
+axes[1].set(xticks=positions, xticklabels=["24×6", "32×8", "36×10", "circuit\n32×8"],
+            ylabel="final damage × 10⁴", title="same information")
+axes[1].legend(fontsize=8)
+for cutoff, color in [((24, 6), "#c46b39"), ((32, 8), "#348a71"), ((36, 10), "#3f6fa0")]:
+    trial = breath_cycles[cutoff]
+    axes[2].plot(trial["time"], trial["contrast"], "o-", color=color, label=f"{cutoff[0]}×{cutoff[1]}")
+baseline_rate = float(breath_old_cycles.query("pulse == 'closed' and na == 32 and nb == 8")["rate"].iloc[0])
+axes[2].plot(breath_cycles[(32, 8)]["time"], np.exp(-baseline_rate*breath_cycles[(32, 8)]["time"]),
+             "--", color="#777777", label="original 32×8 rate fit")  # the fit is a guide, not raw endpoint data
+axes[2].set(xlabel="time (μs)", ylabel="remaining logical-bit contrast", title="nine cycles, no reset")
+axes[2].legend(fontsize=8)
+fig.tight_layout()
+fig.savefig(breath_folder / "23_cat_breathing_readout.png", dpi=170, bbox_inches="tight")
+plt.show()
+plt.close(fig)
+
+# %% [markdown]
+# where this really stands
+#
+# the matched ideal-model result survives `24×6`, `32×8`, and `36×10`.
+# the repeated-cycle rate also drops and is close between `32×8` and `36×10`.
+# the resonant-sine circuit correction
+# still favors the extra buffer drive. that is stronger evidence than a single
+# attractive endpoint. it is still an ideal-detector, model-specific control
+# proposal. stochastic receiver errors, flux-dependent shifts, heating,
+# amplifier noise, and a hardware drive limit on `epsilon_d` remain untested.
+# the same mean-signal information does not by itself prove equal single-shot
+# assignment fidelity. and the repeated-cycle rate still exceeds idle.
+#
+# at the pulse midpoint `alpha²` would be 45% bigger in the static picture.
+# the full two-mode simulation, rather than this static approximation, produced
+# every damage number above. the temporary deformation may shield the well
+# crossing while the memory drive is on; a trajectory-level mechanism test is
+# the next experiment, not a conclusion hidden inside this table.
+
+# %%
+breath_best = breath_matched.query("model == 'ideal' and na == 36 and nb == 10").iloc[0]
+breath_rate = breath_cycle_table.query("na == 32 and nb == 8").iloc[0]
+breath_circuit_row = breath_matched.query("model == 'resonant sine'").iloc[0]
+breath_text = (
+    f"with equal mean-signal information, the temporary buffer-drive ramp lowers final wrong-codeword "
+    f"plus leakage by {breath_best['damage reduction %']:.1f}% at 36×10. "
+    f"the nine-cycle logical contrast rate falls by {breath_rate['rate reduction %']:.1f}% at 32×8, "
+    f"and the resonant-sine circuit test shows a {breath_circuit_row['damage reduction %']:.1f}% endpoint reduction. "
+    "these are model results; single-shot receiver fidelity and hardware limits need separate tests."
+)
+display(Markdown(breath_text))  # put the useful finding and its limit in the same sentence
+(breath_folder / "pump_breathing_findings.md").write_text(breath_text + "\n")
+
+# %% [markdown]
+# do the noisy records still read the bit?
+#
+# equal mean-signal information can miss extra noise or backaction. i reused
+# the original 512-record seeds for each stored bit and ran 512 new homodyne
+# trajectories for each one. the buffer record alone goes into the receiver.
+# its weight comes from the new positive-bit deterministic buffer trace, not
+# the noisy labels. the original pulse's scores use those same seeds, so the
+# error comparison can be paired record by record.
+#
+# i use a conservative paired interval because a difference of a few errors
+# in 1024 records is easy to overinterpret. the interval below is a 95% bound
+# on the difference in assignment-error fractions, new minus original.
+
+# %%
+from scipy.stats import beta  # exact binomial bounds for opposing disagreements
+
+breath_receiver_recompute = False  # true requires the earlier model cells and reruns 1024 trajectories
+breath_receiver_path = breath_folder / "pump_breathing_receiver_scores.npz"
+
+if breath_receiver_recompute:
+    if any(name not in globals() for name in ["dq", "jax", "jnp", "two_mode", "selected_specs", "breath_run", "extension_waveform"]):
+        raise RuntimeError("run the earlier two-mode model cells before generating new homodyne records")
+    spec = selected_specs["closed"]
+    h, jumps, ops, a, b = two_mode(24, 6)  # the same 24×6 stochastic setup as the earlier records
+    envelope = extension_waveform(spec)
+
+    def receiver_extra(t):
+        inside = (t >= 0) & (t < breath_duration)
+        ramp = jnp.sin(jnp.pi*t/breath_duration)**2
+        return jnp.where(inside, -g2*alpha**2*breath_fraction*ramp, 0.0)
+
+    driven = h + dq.modulated(lambda t: 1.111*envelope(t), a+a.dag())
+    driven = driven + dq.modulated(receiver_extra, b+b.dag())
+    template, _ = breath_run(24, 6, breath_fraction, 1.111, +1)  # weight never sees the noisy labels
+    times = np.linspace(0, 3, 601)
+    widths = np.diff(times)
+    weight = np.sqrt(kb)*(template["e"][3].real[:-1]+template["e"][3].real[1:])
+    weight /= np.sqrt(np.sum(weight**2*widths))  # multiplying by a positive constant cannot change a decision
+    with np.load(breath_folder / "method_receiver_scores.npz", allow_pickle=False) as old_data:
+        old_scores = [old_data["closed_scores"][:512, -1].copy(),
+                      old_data["closed_scores"][3072:3584, -1].copy()]
+    scores = []
+    for sign, seed in [(+1, 20261024), (-1, 20262024)]:
+        initial = dq.tensor(dq.coherent(24, sign*alpha), dq.fock(6, 0))
+        keys = jax.random.split(jax.random.key(seed), 512)
+        trial = dq.dssesolve(driven, jumps, initial, times, keys, exp_ops=[ops[0]],
+                            method=dq.method.Rouchon1(dt=0.0001, normalize=False), save_states=False)
+        record = np.asarray(trial.measurements)[:, 0, :]  # only the monitored buffer channel
+        scores.append(record @ (weight*widths))  # integrated fixed matched filter
+    np.savez_compressed(breath_receiver_path, scores=np.concatenate(scores),
+                        signs=np.r_[np.ones(512), -np.ones(512)],
+                        original_scores=np.concatenate(old_scores), times=times, weight=weight)
+
+with np.load(breath_receiver_path, allow_pickle=False) as saved:
+    breath_signs = saved["signs"]
+    breath_scores = saved["scores"]
+    breath_original_scores = saved["original_scores"]
+breath_new_errors = breath_signs*breath_scores <= 0  # the zero threshold is fixed before examining labels
+breath_old_errors = breath_signs*breath_original_scores <= 0
+breath_shots = len(breath_signs)
+breath_new_only = int(np.count_nonzero(breath_new_errors & ~breath_old_errors))
+breath_old_only = int(np.count_nonzero(breath_old_errors & ~breath_new_errors))
+
+
+def breath_disagreement_bounds(events, count):
+    low = 0.0 if events == 0 else beta.ppf(0.0125, events, count-events+1)  # 97.5% exact bound
+    high = 1.0 if events == count else beta.ppf(0.9875, events+1, count-events)
+    return low, high
+
+
+breath_worse_interval = breath_disagreement_bounds(breath_new_only, breath_shots)
+breath_better_interval = breath_disagreement_bounds(breath_old_only, breath_shots)
+breath_receiver_table = pd.DataFrame([{"shots": breath_shots,
+                                      "original errors": int(breath_old_errors.sum()),
+                                      "breathing errors": int(breath_new_errors.sum()),
+                                      "original error fraction": float(breath_old_errors.mean()),
+                                      "breathing error fraction": float(breath_new_errors.mean()),
+                                      "new-only errors": breath_new_only, "original-only errors": breath_old_only,
+                                      "paired difference": float(breath_new_errors.mean()-breath_old_errors.mean()),
+                                      "paired 95% low": float(breath_worse_interval[0]-breath_better_interval[1]),
+                                      "paired 95% high": float(breath_worse_interval[1]-breath_better_interval[0])}])
+display(breath_receiver_table.round(5))  # all errors, disagreements, and uncertainty in one row
+breath_receiver_table.to_csv(breath_folder / "pump_breathing_receiver_comparison.csv", index=False)
+
+# %% [markdown]
+# the 1024-record test has 162 errors for the breathing pulse and 182 for the
+# original pulse. the paired interval still includes zero, so this test does
+# not prove an accuracy improvement. it also does not certify equivalence to
+# within three percentage points. what it does give us is a real noisy-record
+# check alongside the converged deterministic damage and repeated-cycle rates.
+#
+# these noisy trajectories do not include cross-Kerr, a thermal bath,
+# amplifier bandwidth or a measured hardware limit on the extra buffer drive.
+# the next deterministic test checks one of those missing effects.
+
+# %% [markdown]
+# try to break the idea with nonlinear buffer physics
+#
+# [recent two-mode work](https://arxiv.org/html/2605.24100v1) shows why the
+# ideal memory-buffer model can be optimistic: cross-Kerr and dephasing can
+# spoil bit-flip protection, and the buffer can have a sizeable Kerr term.
+# i add `K_b/2 b†²b² + chi n_a n_b` and a memory dephasing jump. the chosen
+# stress parameters are `K_b/2pi = 3.3 MHz`, `chi/2pi = 0.15 MHz`, and
+# `kappa_phi/2pi = 1 kHz`. they are a plausible separate model test, not
+# circuit coefficients derived from this challenge's illustrative ATS table.
+#
+# both memory drives are independently recalibrated under these *same*
+# nonlinear terms to the 0.79 information target. i still compare against the
+# original `|±alpha>` code and simulate both bits, so the nonlinear common
+# buffer offset cannot inflate the information. this test does not include
+# the paper's finite thermal population or pump-induced dissipative effects.
+
+# %%
+breath_nonlinear_recompute = False  # true needs the earlier model cells and runs eight new master equations
+
+
+def breath_nonlinear_run(na, nb, fraction, drive_scale, sign):
+    h, jumps, ops, a, b = two_mode(na, nb)  # start from the same two-mode setup
+    number_a, number_b = a.dag()@a, b.dag()@b
+    h = h + (2*np.pi*3.3)/2*(b.dag()@b.dag()@b@b)  # buffer self-Kerr in rad/μs
+    h = h + (2*np.pi*0.15)*(number_a@number_b)  # memory-buffer cross-Kerr
+    jumps = [*jumps, np.sqrt(2*np.pi*0.001)*number_a]  # one extra dephasing channel
+    spec = selected_specs["closed"]
+    envelope = extension_waveform(spec)
+
+    def extra_buffer(t):
+        inside = (t >= 0) & (t < spec["duration"])
+        ramp = jnp.sin(jnp.pi*t/spec["duration"])**2
+        return jnp.where(inside, -g2*alpha**2*fraction*ramp, 0.0)
+
+    driven = h + dq.modulated(lambda t: drive_scale*envelope(t), a+a.dag())
+    driven = driven + dq.modulated(extra_buffer, b+b.dag())
+    times = np.linspace(0, 3, 601)
+    initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))
+    run = evolve(driven, jumps, initial, times, ops, (na, nb), rtol=2e-10, atol=2e-12)
+    even = np.asarray(dq.to_numpy(cat_ket(na, alpha, 1))).ravel()
+    odd = np.asarray(dq.to_numpy(cat_ket(na, alpha, -1))).ravel()
+    wrong = (even-sign*odd)/np.sqrt(2)
+    final_memory = run["rho"][-1]
+    wrong_probability = np.einsum("i,ij,j->", wrong.conj(), final_memory, wrong).real
+    code_probability = sum(np.einsum("i,ij,j->", cat.conj(), final_memory, cat).real for cat in [even, odd])
+    return run, {"wrong": float(wrong_probability), "leakage": float(1-code_probability),
+                 "memory tail max": float(run["e"][5].real.max()),
+                 "buffer tail max": float(run["e"][6].real.max())}
+
+
+def breath_nonlinear_compare(na, nb, fraction, drive_scale):
+    plus, plus_result = breath_nonlinear_run(na, nb, fraction, drive_scale, +1)
+    minus, minus_result = breath_nonlinear_run(na, nb, fraction, drive_scale, -1)
+    difference = (plus["e"][3].real-minus["e"][3].real)/2
+    damages = [result["wrong"]+result["leakage"] for result in [plus_result, minus_result]]
+    return {"buffer fraction": fraction, "drive scale": drive_scale,
+            "information": float(4*kb*np.trapezoid(difference**2, plus["t"])),
+            "worst damage": float(max(damages)),
+            "memory tail max": max(plus_result["memory tail max"], minus_result["memory tail max"]),
+            "buffer tail max": max(plus_result["buffer tail max"], minus_result["buffer tail max"]),
+            "common buffer max": float(np.max(np.abs((plus["e"][3].real+minus["e"][3].real)/2)))}
+
+
+if breath_nonlinear_recompute:
+    if any(name not in globals() for name in ["two_mode", "selected_specs", "extension_waveform", "evolve", "dq", "jnp", "cat_ket"]):
+        raise RuntimeError("run the earlier two-mode model cells before the nonlinear stress test")
+    for na, nb in [(24, 6), (32, 8)]:
+        trials = [breath_nonlinear_compare(na, nb, fraction, scale)
+                  for fraction, scale in [(0.0, 1.166), (0.45, 1.196)]]
+        suffix = "" if na == 24 else "_32_8"
+        pd.DataFrame(trials).to_csv(breath_folder / f"pump_breathing_nonlinear_calibrated{suffix}.csv", index=False)
+
+breath_nonlinear_rows = []
+for na, nb, suffix in [(24, 6, ""), (32, 8, "_32_8")]:
+    trial = pd.read_csv(breath_folder / f"pump_breathing_nonlinear_calibrated{suffix}.csv")
+    original = trial.query("`buffer fraction` == 0").iloc[0]
+    expanded = trial.query("`buffer fraction` == 0.45").iloc[0]
+    breath_nonlinear_rows.append({"na": na, "nb": nb,
+                                  "original information": float(original["information"]),
+                                  "breathing information": float(expanded["information"]),
+                                  "original damage": float(original["worst damage"]),
+                                  "breathing damage": float(expanded["worst damage"]),
+                                  "damage reduction %": float(100*(1-expanded["worst damage"]/original["worst damage"])),
+                                  "original peak/g2": float(breath_peak_ratio*original["drive scale"]),
+                                  "breathing peak/g2": float(breath_peak_ratio*expanded["drive scale"]),
+                                  "memory tail max": float(expanded["memory tail max"]),
+                                  "buffer tail max": float(expanded["buffer tail max"])})
+breath_nonlinear_table = pd.DataFrame(breath_nonlinear_rows)
+display(breath_nonlinear_table.round(7))  # the small gain must survive a larger Hilbert space
+breath_nonlinear_table.to_csv(breath_folder / "pump_breathing_nonlinear_comparison.csv", index=False)
+
+# %% [markdown]
+# the nonlinear stress test still favors the temporary buffer-drive ramp,
+# but by much less than the ideal model. the larger cutoff matters: the
+# `32×8` result is the better number to quote. both drives remain under the
+# `0.5 g2` memory peak limit and the information target is matched closely.
+# this does not certify a hardware advantage: the nonlinear coefficients
+# were borrowed as a stress test, and thermal occupation, pump dressing,
+# detuning, and the actual readout chain can still change the answer.
+
+# %%
+breath_ideal_summary = breath_matched.query("model == 'ideal' and na == 36 and nb == 10").iloc[0]
+breath_cycle_summary = breath_cycle_table.query("na == 32 and nb == 8").iloc[0]
+breath_stress_summary = breath_nonlinear_table.query("na == 32 and nb == 8").iloc[0]
+breath_receiver_summary = breath_receiver_table.iloc[0]
+breath_full_text = (
+    f"the two-control readout reduces final wrong-codeword plus leakage by "
+    f"{breath_ideal_summary['damage reduction %']:.1f}% in the ideal 36×10 model at matched mean-signal information. "
+    f"the nine-cycle bit-contrast rate falls by {breath_cycle_summary['rate reduction %']:.1f}% at 32×8, "
+    f"with a similar candidate rate at 36×10. with added buffer kerr, cross-kerr and dephasing, "
+    f"the equal-information endpoint advantage is {breath_stress_summary['damage reduction %']:.1f}% at 32×8. "
+    f"in 1024 paired noisy records the assignment errors are "
+    f"{int(breath_receiver_summary['breathing errors'])} versus {int(breath_receiver_summary['original errors'])}; "
+    f"the 95% interval for the new-minus-original error fraction is "
+    f"[{100*breath_receiver_summary['paired 95% low']:.1f}, "
+    f"{100*breath_receiver_summary['paired 95% high']:.1f}] percentage points. "
+    "the receiver difference is unresolved and this is a model result, not a world-first or hardware claim."
+)
+display(Markdown(breath_full_text))  # one place to see the result together with the uncertainty
+(breath_folder / "pump_breathing_full_findings.md").write_text(breath_full_text + "\n")
+
+# %% [markdown]
+# cross-kerr-aware readout: expand the cat and correct the buffer frequency
+#
+# the nonlinear stress test left a useful gap. expanding the cat reduced the
+# readout damage, while a buffer detuning corrected the mean frequency shift
+# from `chi n_a n_b`. the joint pulse uses both effects at once:
+#
+# - add `0.45 epsilon_d sin²(pi t / 1.5)` to the stabilizing buffer drive;
+# - apply a static buffer correction `-chi alpha² n_b`;
+# - add the same correction with the 0.45 sin² envelope during the readout;
+# - raise the memory pulse only to the value needed to recover the information
+#   target.
+#
+# the 0.15 MHz cross-kerr case and the stronger 0.30 MHz stress case are both
+# compared with matched flat pulses and with each control knob by itself. the
+# stronger case is the interesting one: the original closed pulse hits the
+# memory-drive cap before reaching the target information, while the joint
+# pulse reaches it. this uses the known idea of dynamic frequency compensation
+# in nonlinear cat systems, but tests it as a readout and bit-protection
+# co-design problem.
+
+# %%
+import json  # keep the exact control settings beside the result tables
+from pathlib import Path  # saved artifacts make the section quick after restart
+import numpy as np  # finite-time information and rate calculations
+import pandas as pd  # compare all baselines in one table
+import matplotlib.pyplot as plt  # make the trade-off visible
+from IPython.display import Markdown, display  # show the conclusion beside the data
+
+detuning_folder = Path("artifacts")  # all generated tables stay with the notebook
+detuning_recompute = False  # true reruns the nonlinear master equations below
+detuning_buffer_fraction = 0.45  # temporary increase relative to the idle buffer drive
+detuning_factor = 1.0  # compensation in units of the tested chi alpha squared shift
+detuning_memory_scale = 1.185  # recalibrated memory-drive scale at the strong-chi test
+detuning_chi = 2*np.pi*0.30  # the stronger cross-kerr stress value in rad per microsecond
+
+
+def detuning_nonlinear_run(na, nb, buffer_fraction, frequency_factor, drive_scale, sign):
+    h, jumps, ops, a, b = two_mode(na, nb)  # begin with the challenge's two-mode model
+    number_a, number_b = a.dag()@a, b.dag()@b  # number operators for the nonlinear corrections
+    h = h + (2*np.pi*3.3)/2*(b.dag()@b.dag()@b@b)  # buffer self-kerr stress term
+    h = h + detuning_chi*(number_a@number_b)  # memory-buffer cross-kerr stress term
+    jumps = [*jumps, np.sqrt(2*np.pi*0.001)*number_a]  # memory dephasing stress channel
+    spec = selected_specs["closed"]  # the same memory waveform used by the earlier readout
+    memory_envelope = extension_waveform(spec)  # only its calibrated height changes
+
+    def pulse_ramp(t):
+        inside = (t >= 0) & (t < spec["duration"])  # the correction ends before listening
+        return jnp.where(inside, jnp.sin(jnp.pi*t/spec["duration"])**2, 0.0)
+
+    shifted = h - frequency_factor*detuning_chi*alpha**2*number_b  # cancel the mean buffer shift
+    driven = shifted + dq.modulated(lambda t: drive_scale*memory_envelope(t), a+a.dag())
+    driven = driven + dq.modulated(lambda t: -g2*alpha**2*buffer_fraction*pulse_ramp(t), b+b.dag())
+    driven = driven + dq.modulated(lambda t: -frequency_factor*detuning_chi*alpha**2*buffer_fraction*pulse_ramp(t), number_b)
+    times = np.linspace(0, 3, 601)  # same measurement horizon as the original pulse
+    initial = dq.tensor(dq.coherent(na, sign*alpha), dq.fock(nb, 0))  # test both logical wells
+    run = evolve(driven, jumps, initial, times, ops, (na, nb), rtol=2e-10, atol=2e-12)
+    even = np.asarray(dq.to_numpy(cat_ket(na, alpha, 1))).ravel()  # original codeword basis
+    odd = np.asarray(dq.to_numpy(cat_ket(na, alpha, -1))).ravel()
+    wrong = (even-sign*odd)/np.sqrt(2)  # orthogonal wrong codeword for this input
+    final_memory = run["rho"][-1]
+    wrong_probability = np.einsum("i,ij,j->", wrong.conj(), final_memory, wrong).real
+    code_probability = sum(np.einsum("i,ij,j->", cat.conj(), final_memory, cat).real for cat in [even, odd])
+    return run, {"wrong": float(wrong_probability), "leakage": float(1-code_probability),
+                 "memory tail max": float(run["e"][5].real.max()),
+                 "buffer tail max": float(run["e"][6].real.max())}
+
+
+def detuning_nonlinear_compare(na, nb, buffer_fraction, frequency_factor, drive_scale):
+    plus, plus_result = detuning_nonlinear_run(na, nb, buffer_fraction, frequency_factor, drive_scale, +1)
+    minus, minus_result = detuning_nonlinear_run(na, nb, buffer_fraction, frequency_factor, drive_scale, -1)
+    difference = (plus["e"][3].real-minus["e"][3].real)/2  # common buffer motion cancels here
+    damages = [result["wrong"]+result["leakage"] for result in [plus_result, minus_result]]
+    return {"information": float(4*kb*np.trapezoid(difference**2, plus["t"])),
+            "worst damage": float(max(damages)),
+            "wrong plus": plus_result["wrong"], "wrong minus": minus_result["wrong"],
+            "leakage plus": plus_result["leakage"], "leakage minus": minus_result["leakage"],
+            "memory tail max": max(plus_result["memory tail max"], minus_result["memory tail max"]),
+            "buffer tail max": max(plus_result["buffer tail max"], minus_result["buffer tail max"])}
+
+
+if detuning_recompute:
+    if any(name not in globals() for name in ["two_mode", "selected_specs", "extension_waveform", "evolve", "dq", "jnp"]):
+        raise RuntimeError("run the earlier model cells before starting new nonlinear solves")
+    for cutoff in [(32, 8), (36, 10)]:
+        row = detuning_nonlinear_compare(*cutoff, detuning_buffer_fraction, detuning_factor, detuning_memory_scale)
+        pd.DataFrame([row]).to_csv(detuning_folder / f"pump_detuning_recompute_{cutoff[0]}_{cutoff[1]}.csv", index=False)
+
+detuning_ideal = pd.read_csv(detuning_folder / "pump_detuning_factorial_32_8.csv")  # chi/2pi = 0.15 MHz
+detuning_strong = pd.read_csv(detuning_folder / "pump_detuning_chi0p30_recalibrated_32_8.csv")
+detuning_strong_high = pd.read_csv(detuning_folder / "pump_detuning_chi0p30_recalibrated_36_10.csv")
+detuning_flat = pd.read_csv(detuning_folder / "pump_detuning_chi0p30_flat_matched_32_8.csv")
+detuning_only = pd.read_csv(detuning_folder / "pump_detuning_chi0p30_detuning_only_calibrated_32_8.csv").iloc[0]
+detuning_ablation = pd.read_csv(detuning_folder / "pump_detuning_chi0p30_ablation_32_8.csv")
+detuning_breathing_only = detuning_ablation.query("condition == 'breathing only at cap'").iloc[0]
+detuning_cycles = pd.read_csv(detuning_folder / "pump_detuning_nonlinear_cycles_32_8.csv")
+detuning_quadrature = pd.read_csv(detuning_folder / "pump_quadrature_training.csv")  # the failed sideband attempt
+
+detuning_strong_table = pd.DataFrame([
+    {"condition": "flat 1.5 μs", "information": detuning_flat.loc[0, "information"], "damage": detuning_flat.loc[0, "worst damage"]},
+    {"condition": "flat 2.25 μs", "information": detuning_flat.loc[1, "information"], "damage": detuning_flat.loc[1, "worst damage"]},
+    {"condition": "breathing only", "information": detuning_breathing_only["information"], "damage": detuning_breathing_only["worst damage"]},
+    {"condition": "detuning only", "information": detuning_only["information"], "damage": detuning_only["worst damage"]},
+    {"condition": "combined", "information": detuning_strong.loc[1, "information"], "damage": detuning_strong.loc[1, "worst damage"]},
+])
+detuning_strong_table["damage x 1e3"] = 1e3*detuning_strong_table["damage"]  # readable plotting scale
+detuning_strong_table.to_csv(detuning_folder / "pump_detuning_strong_comparison.csv", index=False)
+display(detuning_strong_table.round(7))  # fair strong-chi comparison
+display(detuning_ideal.round(7))  # the same ablation in the milder stress model
+
+detuning_active_rates = detuning_cycles.groupby("condition")["rate per us"].first()
+detuning_original_excess_rate = float(detuning_active_rates["original"]-detuning_active_rates["original idle"])
+detuning_combined_excess_rate = float(detuning_active_rates["combined"]-detuning_active_rates["combined idle"])
+detuning_cycle_summary = pd.DataFrame([{"protocol": "original", "active rate per us": detuning_active_rates["original"],
+                                       "idle rate per us": detuning_active_rates["original idle"],
+                                       "extra readout rate per us": detuning_original_excess_rate},
+                                      {"protocol": "combined", "active rate per us": detuning_active_rates["combined"],
+                                       "idle rate per us": detuning_active_rates["combined idle"],
+                                       "extra readout rate per us": detuning_combined_excess_rate}])
+display(detuning_cycle_summary.round(8))  # compare each readout to its own idle control
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))  # one panel for each part of the claim
+axes[0].scatter(detuning_strong_table["information"], detuning_strong_table["damage x 1e3"], color="#777777")
+for _, row in detuning_strong_table.iterrows():
+    color = "#348a71" if row["condition"] == "combined" else "#c46b39"
+    axes[0].annotate(row["condition"], (row["information"], row["damage x 1e3"]), xytext=(4, 4), textcoords="offset points", fontsize=8)
+    axes[0].scatter([row["information"]], [row["damage x 1e3"]], color=color, s=45)
+axes[0].axvline(0.79, color="gray", ls=":", lw=1)  # common target information
+axes[0].set(xlabel="information", ylabel="endpoint damage × 10³", title="strong cross-kerr trade-off")
+axes[1].bar(["original", "combined"], [1e6*detuning_original_excess_rate, 1e6*detuning_combined_excess_rate], color=["#c46b39", "#348a71"])
+axes[1].set(ylabel="extra rate × 10⁶ / μs", title="repeated nonlinear readout")
+axes[2].plot(detuning_cycles.query("condition == 'original'")["time"], detuning_cycles.query("condition == 'original'")["contrast"], "o-", label="original")
+axes[2].plot(detuning_cycles.query("condition == 'combined'")["time"], detuning_cycles.query("condition == 'combined'")["contrast"], "o-", label="combined")
+axes[2].set(xlabel="time (μs)", ylabel="logical-bit contrast", title="same nonlinear model")
+axes[2].legend()
+fig.tight_layout()
+fig.savefig(detuning_folder / "24_cross_kerr_aware_readout.png", dpi=170, bbox_inches="tight")
+plt.show()
+plt.close(fig)
+
+# %% [markdown]
+# the control has a real operating boundary
+#
+# in the strong `chi/2pi = 0.30 MHz` stress model, the combined pulse reaches
+# `0.791` information at `32×8` and `0.791` again at `36×10`. the matched flat
+# baselines are around `0.796` and `0.797`, but have larger endpoint damage.
+# breathing alone and detuning alone each help; the combined pulse has the
+# smallest endpoint damage in this comparison.
+#
+# the repeated-cycle test is stronger than a single endpoint. subtracting each
+# protocol's own idle rate gives `3.06e-4/us` extra decay for the original and
+# `3.36e-5/us` for the combined pulse, an 89% reduction. the total active rate
+# is still not zero, so this is a lower-damage readout rather than perfect
+# nondemolition measurement.
+#
+# at stronger cross-kerr the detuning must be recalibrated. a factor of 1.5
+# lost the information target while factors near 0.5–1.0 recovered it. this
+# turns the idea into a calibration rule: estimate the buffer shift from the
+# cross-kerr, then choose the detuning and memory-drive scale together under
+# the peak limit. the orthogonal buffer quadrature did not improve damage.
+
+# %%
+detuning_best = detuning_strong_table.query("condition == 'combined'").iloc[0]
+detuning_flat_best = detuning_strong_table.query("condition == 'flat 1.5 μs'").iloc[0]
+detuning_rate_reduction = 100*(1-detuning_combined_excess_rate/detuning_original_excess_rate)
+detuning_damage_reduction = 100*(1-detuning_best["damage"]/detuning_flat_best["damage"])
+detuning_text = (
+    f"the cross-kerr-aware joint pulse reaches information {detuning_best['information']:.3f} at 32×8 and "
+    f"{detuning_strong_high.loc[1, 'information']:.3f} at 36×10. its endpoint damage is "
+    f"{detuning_damage_reduction:.1f}% below the matched 1.5 μs flat baseline. "
+    f"over repeated nonlinear cycles, subtracting each idle control gives an "
+    f"extra-rate reduction of {detuning_rate_reduction:.1f}%. "
+    "the receiver and hardware limits remain separate tests; this is a model-backed control proposal, not a claim of experimental proof."
+)
+display(Markdown(detuning_text))  # keep the headline and its boundary together
+(detuning_folder / "pump_detuning_findings.md").write_text(detuning_text + "\n")

@@ -1,0 +1,166 @@
+{
+  "description": "fixed linear receiver scores from existing quantum measurement records",
+  "software_versions": {
+    "dynamiqs": "0.3.7",
+    "jax": "0.12.0.1",
+    "qutip": "5.3.1",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "matplotlib": "3.11.2",
+    "pandas": "3.1.0"
+  },
+  "pulses": {
+    "flat": {
+      "control": {
+        "kind": "flat",
+        "duration": 1.5,
+        "peak": 1.7840005748911953
+      },
+      "batches": [
+        {
+          "file": "records-a8ce775ff1fd0d96ef585476804a53fa0d6e15e24afbac5fe8b31108d5e3e0b7.npz",
+          "sha256": "e2632fc10a8e098ae5aff123b9af1afbd6ad0bbf92e344c4abe03d86769772b0",
+          "seed": 20261024,
+          "count": 512,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-b859edd9a0993b99d784e98c180a2f4d57b86cc22fff498643bbe581a1d77b8a.npz",
+          "sha256": "687ea34b92c7c626b02f57bdea6175bfee4f232c09fa2f66e3518f1dc19f2e3b",
+          "seed": 20261025,
+          "count": 512,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-66fb94e31db5084c18deccce181dcebde29854d2ccef196f0d2352d00fd207d4.npz",
+          "sha256": "328272c667a92ddce7f6f885a84a559b41331a5a15b84248146cda851bae1306",
+          "seed": 40261025,
+          "count": 1024,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-29fe9bbf9a5940c2db1eab1d1f210c51c0dcb59fc6f06b2d9b3c79deb93e1166.npz",
+          "sha256": "88989d899d7f0c122bb45bb2e8595b7ca47f373f0a4ad8e9ffec5118a990858d",
+          "seed": 40261026,
+          "count": 1024,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-97f76780c47cce318d889a2f12a394ec8017880612eb19eecaa887318fd81351.npz",
+          "sha256": "a7ed986e2af47f033bcf7d7c8607f737e98b99b770708f894251f8d44015eea8",
+          "seed": 20262024,
+          "count": 512,
+          "initial_sign": -1
+        },
+        {
+          "file": "records-fc257978f76e8bba40c36a1b6e1d545601a332c51c89ab3d46652f4a705ddf0c.npz",
+          "sha256": "bc6312ce51be06adae68edd68ec566ad52bf49c959d01892d456f7bf9ad0769e",
+          "seed": 20262025,
+          "count": 512,
+          "initial_sign": -1
+        },
+        {
+          "file": "records-a968bd8dada18615cfc5a589d1d080df68cd81a525888d53d5572a0b133a08e8.npz",
+          "sha256": "6b1acf2c006855539005e21e205e25570f5a41e76261c7390464e89be359cbaf",
+          "seed": 40262025,
+          "count": 1024,
+          "initial_sign": -1
+        },
+        {
+          "file": "records-c31d2f4d9e41eea90eff0593391527f2b2c6d2d4841b7d9346188f5be3c4bbe6.npz",
+          "sha256": "13220e2e4436d1eac2c05f14f34bea3c5257381e2c369422f4601d9c460b7724",
+          "seed": 40262026,
+          "count": 1024,
+          "initial_sign": -1
+        }
+      ]
+    },
+    "closed": {
+      "control": {
+        "kind": "closed nominal",
+        "duration": 1.5,
+        "coefficients": [
+          -0.6746844318247125,
+          -5.24338332425097,
+          -1.3494932750752813,
+          -5.007630191024599,
+          -1.3489265537688762,
+          -4.5021024573826445,
+          -1.3429396969528073,
+          -3.6227892943858127,
+          -1.306672468697821,
+          -1.8902545483245554,
+          0.3135432669218839,
+          -0.6635214864244275,
+          0.1124363541823458,
+          -0.1871366514170797,
+          0.03132103329410212
+        ],
+        "peak": 1.8795341516644681
+      },
+      "batches": [
+        {
+          "file": "records-8fd406a90b4bd4b33fb75bce79a7a66cb0bb976cf0f61374e4ff0b766a79b22b.npz",
+          "sha256": "b013eff65d03a053cd017af5954ca4254c8b4ceb1d82df157b8a1519eba21f20",
+          "seed": 20261024,
+          "count": 512,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-f2ee8049e7ef5e3a945e93ccf434062b7cce7e30b256714a92294fc9f28a5594.npz",
+          "sha256": "7eb70f6ea5c2a18a6d349877fa8ce4581d2d43813630c1e34120749431634a83",
+          "seed": 20261025,
+          "count": 512,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-a4ec0a1d196a97f17eceb65d2edda0bcce40a5fb0c47ca1467dccdbb043d9844.npz",
+          "sha256": "166134b9a3954c2ab72e23431c2c1d31c4a309c9d5ef1e0d2fc5a8ee5647d24b",
+          "seed": 40261025,
+          "count": 1024,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-3bd0ffd06f5950fe8f1ab0eb8d650ac03ae944f0dd450cee5f3a76d95fd6e785.npz",
+          "sha256": "101ddb9c6a5683a4aea72943d04471c098b26ec6924dace10d1623deec88d7b0",
+          "seed": 40261026,
+          "count": 1024,
+          "initial_sign": 1
+        },
+        {
+          "file": "records-57aa3176378ebb80cf2ca7233986cebaf6d9c68a40048e16abd6741287aa7805.npz",
+          "sha256": "d649c1191d8c19b941514684c9281bb85b138c71cf0b1016d6f890b658f1f8a9",
+          "seed": 20262024,
+          "count": 512,
+          "initial_sign": -1
+        },
+        {
+          "file": "records-2ac7e4c2a8a17ebe8f41cfe76bd605b071b189e67451fac52df34fb600d95f63.npz",
+          "sha256": "065c070c4a78162b69ccb336d4fc2c2fa5f5cd416ae6a09996248e7efc1baa9d",
+          "seed": 20262025,
+          "count": 512,
+          "initial_sign": -1
+        },
+        {
+          "file": "records-6292781a8b6439622a388640b9b6d1f0ccf58f919946485caca05f8d569fbca6.npz",
+          "sha256": "3a6ec979bde92d66a4a98a9788f0b5532fab71e8f0f1acb65cef459fa672fe6c",
+          "seed": 40262025,
+          "count": 1024,
+          "initial_sign": -1
+        },
+        {
+          "file": "records-db70b6af77737646241ecd27e6a250fb41a46ff9d9bca9b639a9ee563ee3386e.npz",
+          "sha256": "b50fd7fcc8d2d82ee34c9963e7540f8680e65be4f462af9338c8375963e73887",
+          "seed": 40262026,
+          "count": 1024,
+          "initial_sign": -1
+        }
+      ]
+    }
+  },
+  "threshold": 0,
+  "units": "microseconds",
+  "integration_dt": 0.0001,
+  "sampling_note": "same 6144 records per pulse as audit_assignment_precision.csv; exploratory reuse, not new independent validation",
+  "scores_sha256": "ff793d2058e13cc11d053942847f722d5c7ad349b92a8e2d78d8b4eb51395727"
+}
