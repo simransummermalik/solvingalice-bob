@@ -1,0 +1,37 @@
+{
+  "software_versions": {
+    "dynamiqs": "0.3.7",
+    "jax": "0.12.0.1",
+    "qutip": "5.3.1",
+    "numpy": "2.5.4",
+    "scipy": "1.18.1",
+    "matplotlib": "3.11.2",
+    "pandas": "3.1.0"
+  },
+  "original_sections_retained": true,
+  "comparison": "ideal-model finite readout and a specified repeated measurement schedule",
+  "wrong_plus_leakage_reduction_vs_flat": 0.21241281574639448,
+  "recovery_time_reduction_vs_flat": 0.17633410672853833,
+  "recovery_time_reduction_vs_resonant": 0.10126582278481011,
+  "equal_information_circuit_and_coupling_checks_pass": true,
+  "assignment_equivalence_within_3_points": true,
+  "trajectory_validation_within_3_points": true,
+  "closed_cycle_contrast_rate_per_us": 0.00016114645451939446,
+  "idle_cycle_contrast_rate_per_us": 3.882455914492841e-07,
+  "idle_rate_resolved": true,
+  "idle_protection_preservation_supported": false,
+  "long_readout_cycles": 7,
+  "long_readout_time_us": 21.0,
+  "long_closed_assignment_error": 0.017578125,
+  "long_closed_assignment_95_interval": [
+    0.009274933048931773,
+    0.033066484933693366
+  ],
+  "limits": [
+    "ideal detector efficiency",
+    "no thermal bath or microwave-line transfer function",
+    "circuit corrections are resonant RWA corrections",
+    "no established novelty claim",
+    "repeated-cycle rate is not the stationary spectral rate of task 2.1"
+  ]
+}

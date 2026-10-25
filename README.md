@@ -14,3 +14,5 @@ the `.py` files are authoring/testing support, not the submission or dependencie
 the notebook follows introductory tasks 1.0–1.3, then standard tasks 2.1–2.4. time is in microseconds. every rate is converted from the prompt using 2π. the reported x/z rates are expectation-value decay rates, not single-event rates.
 
 this is a research calculation, not a claim of experimental performance or guaranteed originality. numerical and physical limitations are discussed alongside the results.
+
+the final addendum retains the earlier sections and adds amplitude recalibration with circuit corrections, repeated-measurement bit-decay rates, larger statistical checks, and a longer readout experiment. its computed interpretation is also saved in `artifacts/audit_findings.md` and `artifacts/audit_summary.json`. the earlier `artifacts/summary.json` remains the summary of the original resonant-pulse comparison.

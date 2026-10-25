@@ -1,0 +1,3 @@
+comparison,reference shots,check shots,planned 95% halfwidth,approx equivalence power if difference=0
+original validation,2048,512,0.03799158625580781,0.0
+new independent validation,6144,4096,0.015510000140943935,0.9329097302406291

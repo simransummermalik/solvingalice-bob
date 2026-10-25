@@ -14,6 +14,7 @@ os.environ.setdefault("XDG_CACHE_HOME", str(root / ".cache"))
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--execute", action="store_true")  # execution can take a while
 parser.add_argument("--resume-after", type=int, default=0)  # preserve a completed prefix while developing later tasks
+parser.add_argument("--append-after", type=int, default=0)  # source-cell count; retain the existing notebook including manually added installation cells
 args = parser.parse_args()
 source = (root / "cat_qubits.py").read_text()  # the source keeps diffs easy to review
 cells = []  # each # %% marker becomes one notebook cell
@@ -28,6 +29,16 @@ notebook = nbformat.v4.new_notebook(cells=cells)  # no hidden imports from a hel
 notebook.metadata.kernelspec = {"name": "python3", "display_name": "Python 3", "language": "python"}
 notebook.metadata.language_info = {"name": "python", "file_extension": ".py"}
 target = root / "cat_qubits.ipynb"
+if args.append_after:
+    previous = nbformat.read(target, as_version=4)
+    comparable = [cell for cell in previous.cells if not cell.source.lstrip().startswith("%pip ")]
+    expected = cells[:args.append_after]
+    if len(comparable) != len(expected) or any(old.cell_type != new.cell_type or old.source != new.source for old, new in zip(comparable, expected)):
+        raise ValueError("the existing notebook differs from the expected source prefix; refusing to replace or duplicate any cells")
+    if args.execute:
+        raise ValueError("append mode preserves the existing outputs; execute the appended cells in a kernel with their dependencies")
+    notebook.cells = [*previous.cells, *cells[args.append_after:]]
+    notebook.metadata = previous.metadata
 if args.resume_after:
     previous = nbformat.read(target, as_version=4)
     for index in range(min(args.resume_after, len(previous.cells))):
