@@ -1,24 +1,25 @@
 # cat qubits, from losing photons to reading a bit
 
-this is our Alice & Bob DuQuantum 2026 submission. we started with the introductory
-track because it is the quickest way to make sure the Lindblad equation, the units,
-and the two-mode truncation are all behaving. then we took the standard track
-seriously: measure the noise bias, build a transmon-free readout, and make the
-readout pulse protect the cat as much as possible while it is being measured.
+this is our Alice & Bob DuQuantum 2026 submission. the project started with a
+pretty simple question: if the buffer naturally rings, do we have to treat that
+ringing as a nuisance, or can we actually use it to read the cat?
 
-the short version is this: the buffer is not just a lossy trash can. it has a
-memory, it rings, and that ringing can be made useful. our final proposal
-temporarily expands the cat during readout and simultaneously corrects the
-buffer's cross-Kerr frequency shift. in the stronger nonlinear stress test, this
-joint control reaches the information target at `32 x 8` and `36 x 10`, lowers
+we did the introductory track first, because there is no point optimizing a
+readout for a cat that was created by a badly truncated or badly normalized
+simulation. then we followed the standard track and let the model tell us which
+readout idea survived.
+
+the final answer is a model-backed proposal, not an experimental claim. we
+temporarily expand the cat during readout and correct the buffer's cross-Kerr
+frequency shift at the same time. in the stronger nonlinear stress test, that
+joint pulse reaches the information target at `32 x 8` and `36 x 10`, lowers
 endpoint damage by `20.0%` against a matched flat pulse, and reduces the extra
 repeated-readout decay rate by about `89.0%` relative to the original pulse.
 
-that is a model-backed control result, not a claim that a hardware experiment has
-already proved it. the receiver comparison is deliberately reported too: on paired
-noisy records, the temporary cat expansion gave `162` errors versus `182` for the
-original pulse, but the confidence interval still contains no improvement. the cat
-is doing something interesting; it is not allowed to fib about the statistics.
+we also keep the less convenient result visible: on paired noisy records, the
+temporary expansion gave `162` errors versus `182` for the original pulse, but
+the confidence interval still contains no resolved improvement. the cat may be
+onto something, but it is not allowed to make up its own statistics.
 
 <p align="center">
   <img src="artifacts/24_cross_kerr_aware_readout.png" alt="cross-Kerr-aware readout comparison" width="900">
@@ -49,6 +50,27 @@ the fun part is that the two tracks are not separate homework islands. the
 introductory truncation test tells us what can be trusted in the standard track,
 and the standard-track readout is built from the same memory-buffer physics that
 created the cat in the first place. the buffer gets a job description.
+
+### the routes we were considering at the start
+
+we did not begin with the cross-Kerr-aware pulse already written down. at the
+start, our possible routes were:
+
+| route | the question behind it |
+| --- | --- |
+| build the effective one-mode cat first | do the units, parity, and cat-state intuition work before touching the full buffer? |
+| stay with a simple flat readout | how much can a conventional pulse do if we keep the comparison very clean? |
+| use a resonant or closed pulse | can we shape the buffer motion so it comes back close to where it started? |
+| listen to the natural ringdown | is the changing-sign transient useful if the receiver knows the waveform? |
+| make the cat temporarily breathe | can a larger separation improve information without simply leaving the protected manifold? |
+| derive a circuit-level readout route | can the added memory drive be connected to an actual control port instead of appearing from nowhere? |
+| look for a phase-locking or recovery effect | is there a deeper dynamical feature hiding in the ringing? |
+| make the breathing pulse cross-Kerr-aware | if the cat moves, can we move the buffer's frame with it? |
+
+some of these became real methods, some became baselines, and some became
+pleasantly unsuccessful experiments. we kept the route map because it explains
+why the final idea is a result of the calculation rather than a clever sentence
+added after the plots were finished.
 
 ## 2. the problem in one paragraph
 
@@ -86,9 +108,9 @@ reasonable while quietly solving a different physical problem. we put the
 conversion in one place and use the same matrices for the effective and full
 models.
 
-## 3. the result a judge can check first
+## 3. what came out of the simulations
 
-### 3.1 headline numbers
+### 3.1 the numbers we kept
 
 | check | result | where it comes from |
 | --- | ---: | --- |
@@ -788,17 +810,55 @@ to `False` and run the setup cells in order.
 | [`artifacts/method_receiver_comparison.csv`](artifacts/method_receiver_comparison.csv) | fixed receiver comparison |
 | [`fails.md`](fails.md) | the ideas that lost, and what each loss taught us |
 
-## 10. last slide / the part we would say out loud
+## 10. how we got from the first idea to the final one
 
-the usual readout instinct is to make the signal bigger. our result says that
-the more useful question is: *what does the protected state do while we are
-listening, and can we make that transient part of the measurement instead of
-calling it a nuisance?*
+the first route was the effective one-mode model. it was useful for learning what
+two-photon stabilization is supposed to do, but it could not answer the readout
+question because the whole readout signal lives in the buffer transient. once we
+ran the full model, the memory overshot and the buffer briefly held nearly two
+photons. that was our first clue that the transient was not just numerical mess.
 
-the buffer's natural underdamped ringing is a free waveform already present in
-the system. we shape the memory's temporary breathing and track the buffer's
-cross-Kerr-shifted frame together. that gives a readout pulse with a measured
-trade-off, a failed-method log, a truncation audit, and a clear experiment to try.
+then we tried to make the readout behave politely. flat pulses were easy to
+understand, resonant pulses made the signal larger, and closed pulses tried to
+return the state near the starting point. the matched filter helped a lot, but
+the state was still paying for being measured. the boxcar receiver was especially
+bad for the closed waveform because it averaged positive and negative pieces of
+the ringdown together. the buffer was basically saying, “you asked me to ring and
+then ignored the ring.”
 
-in other words: we did not just ask the cat to meow louder. we taught the buffer
-when to listen. 🐈
+the next idea was the cat-breathing pulse: briefly increase the buffer
+stabilization drive so the two logical wells separate while the buffer listens.
+that looked very promising in the ideal model. the nonlinear stress test was
+useful here because it took some of the shine off the first version. with buffer
+Kerr, cross-Kerr, and memory dephasing, breathing alone was no longer enough.
+
+that failure suggested the final route. if the memory occupation shifts the
+buffer frequency through cross-Kerr, then the buffer is being asked to listen
+while its resonance is moving. we added a synchronized frequency correction to
+the breathing pulse. it is a small conceptual change, but it changes the
+question from “how do we make the signal bigger?” to “how do we keep the
+measurement frame aligned with the protected state?”
+
+### why this route stayed
+
+we kept the joint pulse because it passed the checks that mattered together:
+
+- it reaches the `0.79` information target in the strong-`chi` stress model,
+  where the original capped pulse does not;
+- it beats matched flat baselines on endpoint damage;
+- its breathing-only and detuning-only ablations are both worse;
+- it behaves similarly at `32 x 8` and `36 x 10`;
+- it lowers the extra repeated-cycle readout rate by about `89.0%`;
+- it has a clear hardware interpretation: a shaped stabilization drive plus a
+  calibrated buffer-frequency correction.
+
+we did not keep it because it sounded the most futuristic. we kept it because it
+survived the full Lindblad calculation, the cutoff checks, the nonlinear stress
+test, and the repeated-cycle test at the same time. the noisy receiver result is
+still unresolved, so the next experiment would be to calibrate the measurement
+chain and test whether the simulated waveform-aware advantage survives there.
+
+the project started with “can the buffer's ringing help?” and ended with a more
+specific answer: yes, but only if we shape the cat and keep track of the frame in
+which the buffer is ringing. we did not just ask the cat to meow louder. we taught
+the buffer when to listen. 🐈
