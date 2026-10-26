@@ -1,4 +1,9 @@
-# Cat Qubits: From Losing Photons to Reading a Bit
+# Updates: Placed 3 Prizes...
+# -Won Alice & Bob Track (1st Place)
+# -Won the overall competition (1st Place)
+# -Won best use of ElevenLabs (MLH)
+
+# Cat Qubits: From Losing Photons to Reading a Bits
 
 Our Alice & Bob DuQuantum 2026 project starts with photon loss and ends with a
 question about measurement: **Can the buffer's natural ringing help us read a cat qubit?**
